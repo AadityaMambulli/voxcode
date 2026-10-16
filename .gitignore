@@ -10,4 +10,6 @@ model-cache/
 models/
 *.wav
 !tests/fixtures/*.wav
-
+.m1-empty-appdata/
+.m1-timing-appdata/
+.language-check/

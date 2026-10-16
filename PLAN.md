@@ -1,7 +1,7 @@
 # voxcode implementation plan
 
-Status: M0 research complete. Per the milestone instructions, implementation stops
-after this document.
+Status: M2 implementation complete. M3 plugin work remains intentionally out of
+scope for this milestone.
 
 ## Project goal
 
@@ -38,8 +38,18 @@ Build `voxcode`, a local-first voice mode for terminal coding agents:
   `espeak-ng`. The selected engine and the reason for fallback will be reported.
 - The default STT model is `small`, CPU `int8`, downloaded on first use with visible
   progress.
+- STT models are loaded lazily, cached models are silent by default, and a shared
+  server engine remains in memory for the server lifetime. `--verbose` enables
+  cached-model loading timing.
+- STT language defaults to auto-detect and can be pinned through configuration,
+  `VOXCODE_LANGUAGE`, setup, or MCP configuration.
 - Use one shared core service for CLI and MCP so device selection, state, VAD,
   timing, errors, and TTS reporting do not diverge.
+- Use WebRTC VAD for auto-stop when the `vad` extra is installed, with the
+  configured fixed-seconds duration as an automatic fallback when VAD is
+  unavailable. The maximum listen duration remains bounded.
+- VAD also has a bounded initial-silence timeout and an energy gate so ambient
+  microphone noise does not keep an otherwise silent listen open indefinitely.
 - Use a relative marketplace plugin source (`./plugins/voxcode`) so
   `/plugin marketplace add ./` works before the repository is hosted. A GitHub
   owner is therefore not needed for local validation. If a hosted source later
@@ -266,8 +276,9 @@ Run all feasible tests and quote actual output, then stop for manual commands.
 
 ### M2: MCP
 
-Add the stdio server and all five tools. Add an end-to-end fake-backend stdio test
-that calls every tool, plus a hardware-marked test. Stop after real test output.
+The stdio server and all five tools are implemented in `voxcode-mcp`. The
+end-to-end fake-backend stdio test calls every tool, and a hardware-marked test
+launches the real server and exercises TTS. Stop after real test output.
 
 ### M3: Claude Code plugin
 

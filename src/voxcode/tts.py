@@ -5,9 +5,10 @@ from __future__ import annotations
 import platform
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+
+
+_active_process: subprocess.Popen[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,9 @@ class TtsEngine:
 
     def speak(self, text: str) -> TtsResult:
         raise NotImplementedError
+
+    def stop(self) -> bool:
+        return False
 
 
 class PiperEngine(TtsEngine):
@@ -52,15 +56,22 @@ class SapiEngine(TtsEngine):
             "$s.Speak([Console]::In.ReadToEnd())"
         )
         try:
-            subprocess.run(
+            process = subprocess.Popen(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                input=text,
                 text=True,
-                check=True,
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-        except (OSError, subprocess.CalledProcessError) as exc:
+            global _active_process
+            _active_process = process
+            process.communicate(text)
+            if process.returncode:
+                raise RuntimeError(f"Windows SAPI exited with code {process.returncode}")
+        except OSError as exc:
             raise RuntimeError(f"Windows SAPI failed: {exc}") from exc
+        finally:
+            _active_process = None
         return TtsResult(self.name, "System.Speech.Synthesis")
 
 
@@ -76,8 +87,8 @@ class MacSayEngine(TtsEngine):
 
     def speak(self, text: str) -> TtsResult:
         try:
-            subprocess.run(["say", text], check=True, capture_output=True, text=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
+            _run_process(["say", text])
+        except OSError as exc:
             raise RuntimeError(f"macOS say failed: {exc}") from exc
         return TtsResult(self.name, "say")
 
@@ -94,8 +105,8 @@ class EspeakEngine(TtsEngine):
         if not executable:
             raise RuntimeError("espeak-ng/espeak executable not found")
         try:
-            subprocess.run([executable, text], check=True, capture_output=True, text=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
+            _run_process([executable, text])
+        except OSError as exc:
             raise RuntimeError(f"espeak-ng failed: {exc}") from exc
         return TtsResult(self.name, executable)
 
@@ -122,3 +133,21 @@ def speak(text: str) -> TtsResult:
         raise RuntimeError("No TTS engine available: " + "; ".join(reasons))
     return engine.speak(text)
 
+
+def _run_process(command: list[str]) -> None:
+    global _active_process
+    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    _active_process = process
+    try:
+        _stdout, _stderr = process.communicate()
+        if process.returncode:
+            raise OSError(f"process exited with code {process.returncode}")
+    finally:
+        _active_process = None
+
+
+def stop_speaking() -> bool:
+    if _active_process is None or _active_process.poll() is not None:
+        return False
+    _active_process.terminate()
+    return True

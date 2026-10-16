@@ -20,6 +20,12 @@ audio = [
 stt = [
   "faster-whisper>=1.1",
 ]
+vad = [
+  "webrtcvad-wheels>=2.0.14",
+]
+mcp = [
+  "mcp>=1.0,<2",
+]
 test = [
   "pytest>=8",
 ]
@@ -27,11 +33,14 @@ dev = [
   "numpy>=1.26",
   "sounddevice>=0.5",
   "faster-whisper>=1.1",
+  "webrtcvad-wheels>=2.0.14",
+  "mcp>=1.0,<2",
   "pytest>=8",
 ]
 
 [project.scripts]
 voxcode = "voxcode.cli:main"
+voxcode-mcp = "voxcode.mcp_server:main"
 
 [tool.pytest.ini_options]
 markers = [

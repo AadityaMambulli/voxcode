@@ -19,6 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     speak_parser.add_argument("text")
     listen_parser = sub.add_parser("listen", help="record and transcribe speech")
     listen_parser.add_argument("--seconds", type=float)
+    listen_parser.add_argument("--verbose", action="store_true")
+    listen_parser.add_argument("--debug-vad", action="store_true")
     sub.add_parser("test", help="speak and transcribe a four-second recording")
     sub.add_parser("doctor", help="check the real local voice setup")
     sub.add_parser("setup", help="choose and save audio devices")
@@ -42,8 +44,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "listen":
             if args.seconds is not None:
                 config = replace(config, fixed_seconds=args.seconds)
-            result = listen(config)
-            print(f"transcript: {result.transcript}")
+            if config.legacy_ignored:
+                print(
+                    "[WARN] Legacy config detected: saved device and default settings "
+                    "were ignored; run `voxcode setup` to choose settings."
+                )
+            result = listen(
+                config,
+                language=config.language,
+                verbose=args.verbose,
+                debug_vad=args.debug_vad,
+            )
+            print(f"language: {config.language or 'auto-detect'}")
+            print(f"transcript: {_console_text(result.transcript)}")
             print(f"recording_seconds: {result.record_seconds:.2f}")
             print(f"transcription_seconds: {result.transcription_seconds:.2f}")
             return 0
@@ -68,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "voice":
             saved = replace(config, voice_enabled=args.state == "on")
-            path = save_config(saved)
+            path = save_config(saved, fields={"voice_enabled"})
             print(f"voice {args.state}; saved {path}")
             return 0
     except (RuntimeError, ValueError) as exc:
@@ -121,9 +134,16 @@ def _hint(name: str) -> str:
         return "pip install -e .[stt]"
     if "TTS" in name:
         return "Install Piper, or use the platform fallback documented by voxcode."
+    if "VAD" in name:
+        return "Install with `pip install -e .[vad]`."
     if "Python" in name:
         return "Use a Python interpreter in the supported range >=3.10,<3.14."
     return "Review the reported reason."
+
+
+def _console_text(text: str) -> str:
+    encoding = sys.stdout.encoding or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
 
 
 def _setup(config: Config) -> int:
@@ -132,9 +152,25 @@ def _setup(config: Config) -> int:
     output_devices = [d for d in devices if d.max_output_channels]
     input_device = _choose_device("input", input_devices)
     output_device = _choose_device("output", output_devices)
-    saved = replace(config, input_device=input_device.index, output_device=output_device.index)
-    path = save_config(saved)
-    print(f"saved input={input_device.index}, output={output_device.index} to {path}")
+    language = input("Language (blank for auto-detect): ").strip() or None
+    saved = replace(
+        config,
+        input_device=None,
+        output_device=None,
+        input_device_name=input_device.name,
+        input_device_hostapi=input_device.hostapi,
+        output_device_name=output_device.name,
+        output_device_hostapi=output_device.hostapi,
+        language=language,
+    )
+    path = save_config(
+        saved,
+        fields={
+            "input_device_name", "input_device_hostapi",
+            "output_device_name", "output_device_hostapi", "language",
+        },
+    )
+    print(f"saved input={input_device.name}, output={output_device.name} to {path}")
     return 0
 
 
@@ -155,8 +191,14 @@ def _choose_device(direction: str, devices: list) -> object:
 
 
 def _print_config(config: Config) -> None:
+    from .config import config_path
+    print(f"path = {config_path()}")
     for key, value in config.__dict__.items():
-        print(f"{key} = {value!r}")
+        if key in {"sources", "legacy_ignored"}:
+            continue
+        print(f"{key} = {value!r} ({config.sources.get(key, 'default')})")
+    if config.legacy_ignored:
+        print("legacy config: device and saved default settings ignored; run `voxcode setup`")
 
 
 if __name__ == "__main__":
