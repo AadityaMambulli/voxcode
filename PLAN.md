@@ -27,6 +27,9 @@ Build `voxcode`, a local-first voice mode for terminal coding agents:
 - Use TOML in the platform user configuration directory, with environment variables
   taking precedence over file values. Never hardcode a user or repository path.
 - Require an explicit input-device selection when more than one input device exists.
+- Use the OS default input/output devices when no device is configured. `voxcode
+  devices` will show one host API (WASAPI on Windows), `doctor` will report the
+  chosen defaults, and `setup` will provide optional saved device selection.
 - Keep microphone capture scoped to an explicit `listen` operation and display a
   visible recording indicator.
 - Implement real backends by default. Test fakes are available only through an

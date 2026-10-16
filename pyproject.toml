@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voxcode"
+version = "0.1.0"
+description = "Local-first voice mode for terminal coding agents"
+readme = "PLAN.md"
+requires-python = ">=3.10,<3.14"
+license = { text = "MIT" }
+authors = [{ name = "voxcode maintainers" }]
+dependencies = []
+
+[project.optional-dependencies]
+audio = [
+  "numpy>=1.26",
+  "sounddevice>=0.5",
+]
+stt = [
+  "faster-whisper>=1.1",
+]
+test = [
+  "pytest>=8",
+]
+dev = [
+  "numpy>=1.26",
+  "sounddevice>=0.5",
+  "faster-whisper>=1.1",
+  "pytest>=8",
+]
+
+[project.scripts]
+voxcode = "voxcode.cli:main"
+
+[tool.pytest.ini_options]
+markers = [
+  "hardware: tests requiring real audio hardware and installed speech engines",
+  "fake: tests using explicit fake backends instead of real hardware",
+]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
