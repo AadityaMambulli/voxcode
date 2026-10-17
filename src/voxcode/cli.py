@@ -33,8 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    config = load_config()
     try:
+        config = load_config()
         if args.command == "devices":
             return _devices()
         if args.command == "speak":

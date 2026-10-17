@@ -60,8 +60,11 @@ def load_config(path: Path | None = None) -> Config:
     path = path or config_path()
     data: dict[str, Any] = {}
     if path.exists():
-        with path.open("rb") as handle:
-            parsed = tomllib.load(handle)
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+            parsed = tomllib.loads(text)
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+            raise RuntimeError(f"could not read config file {path}: {exc}") from exc
         data = parsed.get("voxcode", parsed)
     legacy = path.exists() and "config_version" not in data
     allowed_legacy = {"language", "voice_enabled"}
@@ -82,6 +85,8 @@ def load_config(path: Path | None = None) -> Config:
         values["output_device"] = _value(data, "output_device", None)
     config = replace(defaults, **values, config_version=int(data.get("config_version", 1)))
     sources = {key: "file" for key in values}
+    if path.exists() and "config_version" in data:
+        sources["config_version"] = "file"
     if legacy:
         config = replace(config, input_device=None, output_device=None, legacy_ignored=True)
     env = {

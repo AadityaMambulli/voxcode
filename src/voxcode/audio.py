@@ -207,6 +207,8 @@ def _record_with_vad(
     started = time.perf_counter()
     energies: list[float] = []
     noise_floor: float | None = None
+    calibration_start = max(1, round(0.15 * 1000 / frame_ms))
+    calibration_end = max(calibration_start + 1, round(0.36 * 1000 / frame_ms))
     with sd.InputStream(
         samplerate=sample_rate,
         channels=channels,
@@ -221,8 +223,9 @@ def _record_with_vad(
             pcm = (mono * 32767).astype("int16").tobytes()
             energy = float((mono**2).mean() ** 0.5)
             energies.append(energy)
-            if len(energies) <= max(1, round(0.3 * 1000 / frame_ms)):
-                noise_floor = sum(energies) / len(energies)
+            if calibration_start <= len(energies) <= calibration_end:
+                calibration = energies[calibration_start - 1 : calibration_end]
+                noise_floor = float(__import__("numpy").median(calibration))
             adaptive_threshold = max(
                 silence_threshold,
                 (noise_floor or silence_threshold) * 2.5,

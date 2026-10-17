@@ -54,3 +54,18 @@ def test_environment_value_has_environment_provenance(tmp_path: Path, monkeypatc
     config = load_config()
     assert config.language == "en"
     assert config.sources["language"] == "environment"
+
+
+@pytest.mark.fake
+def test_config_accepts_utf8_bom(tmp_path: Path) -> None:
+    path = tmp_path / "bom.toml"
+    path.write_bytes(b"\xef\xbb\xbf[voxcode]\nlanguage = 'en'\n")
+    assert load_config(path).language == "en"
+
+
+@pytest.mark.fake
+def test_config_parse_error_names_file(tmp_path: Path) -> None:
+    path = tmp_path / "broken.toml"
+    path.write_text("[voxcode\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="broken\\.toml"):
+        load_config(path)

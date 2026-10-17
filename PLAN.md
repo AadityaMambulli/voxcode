@@ -1,6 +1,6 @@
 # voxcode implementation plan
 
-Status: M2 implementation complete. M3 plugin work remains intentionally out of
+Status: M3 implementation complete. M4 documentation and CI work remains out of
 scope for this milestone.
 
 ## Project goal
@@ -26,7 +26,8 @@ Build `voxcode`, a local-first voice mode for terminal coding agents:
   attempting an incompatible install.
 - Use TOML in the platform user configuration directory, with environment variables
   taking precedence over file values. Never hardcode a user or repository path.
-- Require an explicit input-device selection when more than one input device exists.
+- Use the configured device when available, then the OS default, then the first
+  available device.
 - Use the OS default input/output devices when no device is configured. `voxcode
   devices` will show one host API (WASAPI on Windows), `doctor` will report the
   chosen defaults, and `setup` will provide optional saved device selection.
@@ -245,6 +246,16 @@ expose exactly `listen(timeout_s)`, `speak(text, interrupt=false)`,
 the shared core.
 
 ## Documentation limitations and unverified items
+
+M3 launch decision: the plugin's `.mcp.json` uses `uvx` with a PEP 508 Git
+dependency and the `audio`, `stt`, `vad`, and `mcp` extras. The repository owner
+is the single `__GITHUB_OWNER__` placeholder, replaced by
+`scripts/set_owner.py` before a GitHub release. This avoids requiring a
+stranger's local `.venv` after the repository is published. Claude's
+`${CLAUDE_PLUGIN_ROOT}` is verified for files shipped inside the copied plugin,
+but the fetched docs do not verify `uvx` behavior or guarantee that a
+marketplace copy contains the marketplace root and its `src/` tree; that
+networked launch was not run here.
 
 These are intentionally not presented as verified:
 

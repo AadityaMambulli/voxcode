@@ -1,0 +1,14 @@
+{
+  "name": "voxcode",
+  "displayName": "voxcode voice mode",
+  "version": "0.1.0",
+  "description": "Local-first voice mode for terminal coding agents",
+  "author": {
+    "name": "voxcode maintainers"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}
