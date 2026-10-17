@@ -3,6 +3,7 @@ import pytest
 from voxcode.audio import list_devices
 from voxcode.config import load_config
 from voxcode.core import doctor, listen, speak
+from voxcode.ptt import ptt_readiness
 
 
 @pytest.mark.hardware
@@ -59,3 +60,9 @@ def test_real_vad_listen() -> None:
     config = config.__class__(**{**config.__dict__, "fixed_seconds": 15.0, "vad_mode": "auto"})
     result = listen(config)
     assert result.record_seconds < config.fixed_seconds
+
+
+@pytest.mark.hardware
+def test_real_ptt_hotkey_readiness() -> None:
+    ok, detail = ptt_readiness(load_config())
+    assert ok, detail

@@ -71,6 +71,20 @@ def test_config_round_trips_hook_skip_labels(tmp_path: Path) -> None:
 
 
 @pytest.mark.fake
+def test_config_round_trips_ptt_settings(tmp_path: Path) -> None:
+    path = tmp_path / "ptt.toml"
+    original = Config(
+        ptt_key="F10",
+        ptt_mode="toggle",
+        ptt_auto_submit=True,
+        ptt_beep=True,
+        ptt_max_chars=500,
+    )
+    save_config(original, path)
+    assert load_config(path) == original
+
+
+@pytest.mark.fake
 def test_config_parse_error_names_file(tmp_path: Path) -> None:
     path = tmp_path / "broken.toml"
     path.write_text("[voxcode\n", encoding="utf-8")

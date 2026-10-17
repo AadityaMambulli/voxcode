@@ -46,6 +46,11 @@ class Config:
     hook_skip_labels: list[str] = field(
         default_factory=lambda: ["Skipped", "Risk", "Verified", "Note", "Next"]
     )
+    ptt_key: str = "F9"
+    ptt_mode: str = "hold"
+    ptt_auto_submit: bool = False
+    ptt_beep: bool = False
+    ptt_max_chars: int = 2000
     config_version: int = 1
     legacy_ignored: bool = field(default=False, compare=False, repr=False)
     sources: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
@@ -81,6 +86,7 @@ def load_config(path: Path | None = None) -> Config:
         "compute_type", "vad_mode", "fixed_seconds", "silence_seconds",
         "voice_enabled", "language", "vad_aggressiveness", "silence_threshold",
         "hook_skip_labels",
+        "ptt_key", "ptt_mode", "ptt_auto_submit", "ptt_beep", "ptt_max_chars",
     ):
         if key in keys and key in data:
             values[key] = _value(data, key, getattr(defaults, key))
@@ -108,6 +114,11 @@ def load_config(path: Path | None = None) -> Config:
         "language": os.getenv("VOXCODE_LANGUAGE"),
         "vad_aggressiveness": os.getenv("VOXCODE_VAD_AGGRESSIVENESS"),
         "silence_threshold": os.getenv("VOXCODE_SILENCE_THRESHOLD"),
+        "ptt_key": os.getenv("VOXCODE_PTT_KEY"),
+        "ptt_mode": os.getenv("VOXCODE_PTT_MODE"),
+        "ptt_auto_submit": os.getenv("VOXCODE_PTT_AUTO_SUBMIT"),
+        "ptt_beep": os.getenv("VOXCODE_PTT_BEEP"),
+        "ptt_max_chars": os.getenv("VOXCODE_PTT_MAX_CHARS"),
     }
     for key, value in env.items():
         if value is not None:
@@ -123,6 +134,10 @@ def load_config(path: Path | None = None) -> Config:
                 value = int(value)
             elif key == "silence_threshold":
                 value = float(value)
+            elif key in {"ptt_auto_submit", "ptt_beep"}:
+                value = value.lower() in {"1", "true", "yes", "on"}
+            elif key == "ptt_max_chars":
+                value = int(value)
             config = replace(config, **{key: value})
             sources[key] = "environment"
     config = replace(config, sources=sources)
@@ -150,6 +165,7 @@ def save_config(
                 "fixed_seconds", "silence_seconds", "voice_enabled",
                 "language", "vad_aggressiveness", "silence_threshold",
                 "hook_skip_labels",
+                "ptt_key", "ptt_mode", "ptt_auto_submit", "ptt_beep", "ptt_max_chars",
             )
             if getattr(config, key) != getattr(defaults, key)
         }
@@ -160,6 +176,7 @@ def save_config(
         "compute_type", "vad_mode", "fixed_seconds", "silence_seconds",
         "voice_enabled", "language", "vad_aggressiveness", "silence_threshold",
         "hook_skip_labels",
+        "ptt_key", "ptt_mode", "ptt_auto_submit", "ptt_beep", "ptt_max_chars",
     ):
         if key in fields:
             value = getattr(config, key)

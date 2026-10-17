@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -25,6 +26,8 @@ def _run_fake_mcp(tmp_path: Path) -> list[str]:
                 tools = await session.list_tools()
                 names = sorted(tool.name for tool in tools.tools)
                 await session.call_tool("listen", {"timeout_s": 1})
+                listen_result = await session.call_tool("listen", {"timeout_s": 1})
+                assert json.loads(listen_result.content[0].text)["error"] is None
                 await session.call_tool("speak", {"text": "hello", "interrupt": False})
                 await session.call_tool("stop_speaking", {})
                 await session.call_tool("voice_status", {})
@@ -52,9 +55,17 @@ def test_stdio_mcp_calls_every_tool(tmp_path: Path) -> None:
 def test_mcp_reuses_one_stt_engine() -> None:
     class CountingStt:
         def __init__(self):
+            self.loads = 0
             self.calls = 0
+            self.model = None
+
+        def _load(self):
+            if self.model is None:
+                self.loads += 1
+                self.model = object()
 
         def transcribe(self, audio, sample_rate, language=None):
+            self._load()
             self.calls += 1
             return "fake", 0.001
 
@@ -63,7 +74,19 @@ def test_mcp_reuses_one_stt_engine() -> None:
     listen_tool = server._tool_manager._tools["listen"].fn
     listen_tool(timeout_s=1)
     listen_tool(timeout_s=1)
+    assert engine.loads == 1
     assert engine.calls == 2
+
+
+@pytest.mark.fake
+def test_mcp_tool_progress_does_not_use_stdout(capsys: pytest.CaptureFixture[str]) -> None:
+    server = create_server(fake=True)
+    listen_tool = server._tool_manager._tools["listen"].fn
+
+    listen_tool(timeout_s=1)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
 @pytest.mark.hardware

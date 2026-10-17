@@ -6,6 +6,8 @@ import argparse
 import sys
 import threading
 from dataclasses import replace
+from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -19,7 +21,6 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
     from .tts import TtsResult, speak as tts_speak
 
     config = load_config()
-    mcp = FastMCP("voxcode")
     shared_stt = stt_engine or (
         None
         if fake
@@ -36,6 +37,14 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
                 shared_stt._load()
             except RuntimeError as exc:
                 print(f"model preload failed: {exc}", file=sys.stderr, flush=True)
+
+    @asynccontextmanager
+    async def lifespan(_server: FastMCP[Any]):
+        if shared_stt is not None and not fake:
+            threading.Thread(target=preload_model, daemon=True).start()
+        yield {}
+
+    mcp = FastMCP("voxcode", lifespan=lifespan)
     fake_device = AudioDevice(0, "fake microphone", 1, 0, "fake", True, False)
 
     def fake_select(_configured: Any, _direction: str) -> tuple[AudioDevice, str]:
@@ -45,7 +54,9 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
         return "fake audio", 16000
 
     class FakeStt:
-        def transcribe(self, audio: Any, sample_rate: int) -> tuple[str, float]:
+        def transcribe(
+            self, audio: Any, sample_rate: int, language: str | None = None
+        ) -> tuple[str, float]:
             return f"fake transcript ({audio}, {sample_rate}Hz)", 0.001
 
     def fake_speak(text: str) -> TtsResult:
@@ -54,18 +65,37 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
     @mcp.tool()
     def listen(timeout_s: float = 4.0) -> dict[str, Any]:
         """Record and transcribe speech for at most timeout_s seconds."""
+        if timeout_s <= 0:
+            return {"transcript": "", "error": "timeout_s must be positive"}
         active_config = replace(config, fixed_seconds=timeout_s)
-        result = core.listen(
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(
+            core.listen,
             active_config,
-            progress=lambda message: print(message, file=sys.stderr, flush=True),
-            stt=shared_stt if shared_stt is not None else FakeStt(),
-            device_selector=fake_select if fake else core.select_device,
-            recorder=fake_record if fake else core.record,
+            lambda message: print(message, file=sys.stderr, flush=True),
+            shared_stt if shared_stt is not None else FakeStt(),
+            fake_select if fake else core.select_device,
+            fake_record if fake else core.record,
         )
+        try:
+            deadline = max(120.0, timeout_s + 30.0)
+            result = future.result(timeout=deadline)
+        except TimeoutError:
+            future.cancel()
+            return {
+                "transcript": "",
+                "error": f"listen exceeded {deadline:g}s deadline",
+            }
+        except Exception as exc:
+            return {"transcript": "", "error": str(exc)}
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
         return {
             "transcript": result.transcript,
+            "error": None,
             "record_seconds": result.record_seconds,
             "transcription_seconds": result.transcription_seconds,
+            "model_load_seconds": result.model_load_seconds,
         }
 
     @mcp.tool()

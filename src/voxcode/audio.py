@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -172,6 +173,57 @@ def record(
     except Exception as exc:
         raise RuntimeError(f"microphone recording failed: {exc}") from exc
     progress(f"recorded {seconds:g}s in {time.perf_counter() - started:.2f}s")
+    return audio, actual_sample_rate
+
+
+def record_until_stopped(
+    sample_rate: int,
+    channels: int,
+    device: int | str | None,
+    stop_event: threading.Event,
+    max_seconds: float = 60.0,
+    progress: Callable[[str], None] = print,
+) -> tuple[Any, int]:
+    sd = _sounddevice()
+    actual_sample_rate = sample_rate
+    try:
+        sd.check_input_settings(
+            device=device, samplerate=sample_rate, channels=channels
+        )
+    except Exception:
+        device_info = sd.query_devices(device, "input")
+        actual_sample_rate = int(float(device_info["default_samplerate"]))
+        progress(
+            f"sample rate {sample_rate}Hz is unsupported; "
+            f"using device default {actual_sample_rate}Hz"
+        )
+    frame_samples = max(1, actual_sample_rate * 30 // 1000)
+    chunks: list[Any] = []
+    started = time.perf_counter()
+    try:
+        with sd.InputStream(
+            samplerate=actual_sample_rate,
+            channels=channels,
+            dtype="float32",
+            device=device,
+            blocksize=frame_samples,
+        ) as stream:
+            while (
+                not stop_event.is_set()
+                and time.perf_counter() - started < max_seconds
+            ):
+                data, _overflowed = stream.read(frame_samples)
+                chunks.append(data.copy())
+    except Exception as exc:
+        raise RuntimeError(f"microphone recording failed: {exc}") from exc
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError(
+            "numpy is required for PTT recording; install with `pip install -e .[audio]`"
+        ) from exc
+    audio = np.concatenate(chunks, axis=0) if chunks else np.empty((0, channels))
+    progress(f"recorded {time.perf_counter() - started:.2f}s")
     return audio, actual_sample_rate
 
 

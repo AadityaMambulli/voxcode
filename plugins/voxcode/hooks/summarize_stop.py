@@ -149,6 +149,7 @@ def main() -> int:
         "speech_finished": False,
         "exception": None,
     }
+    dry_run = "--dry-run" in sys.argv
     try:
         hook_input: dict[str, Any] = json.load(sys.stdin)
         log["stdin_keys"] = sorted(hook_input.keys())
@@ -181,6 +182,10 @@ def main() -> int:
         _hook_log(log)
         return 0
     log["summary_length"] = len(summary)
+    if dry_run:
+        print(summary)
+        _hook_log(log)
+        return 0
     if "--dev" in sys.argv:
         command = [sys.executable, "-m", "voxcode.cli", "speak", summary]
     else:

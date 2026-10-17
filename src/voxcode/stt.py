@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import os
 import inspect
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,33 +23,48 @@ class SttEngine:
         self.progress = progress
         self.verbose = verbose
         self._model: Any = None
+        self.last_load_seconds = 0.0
+        self._load_lock = threading.Lock()
 
-    def _load(self) -> Any:
-        if self._model is None:
-            try:
-                from faster_whisper import WhisperModel
-            except ImportError as exc:
-                raise RuntimeError(
-                    "faster-whisper is not installed; install with `pip install -e .[stt]`"
-                ) from exc
-            model_path = _cached_model_path(self.model_name)
-            if model_path is None:
-                self.progress(
-                    f"downloading faster-whisper model {self.model_name!r} "
-                    f"(compute_type={self.compute_type})"
+    def _load(self, local_only: bool = False) -> Any:
+        load_started = time.perf_counter()
+        with self._load_lock:
+            if self._model is None:
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "faster-whisper is not installed; install with `pip install -e .[stt]`"
+                    ) from exc
+                model_path = _cached_model_path(self.model_name)
+                if model_path is None:
+                    if local_only:
+                        raise RuntimeError(
+                            f"faster-whisper model {self.model_name!r} is not cached; "
+                            "run `voxcode listen` once while online before starting PTT"
+                        )
+                    self.progress(
+                        f"downloading faster-whisper model {self.model_name!r} "
+                        f"(compute_type={self.compute_type})"
+                    )
+                    model_path = _download_model(self.model_name)
+                elif self.verbose:
+                    self.progress(f"loading cached model {self.model_name!r}")
+                started = time.perf_counter()
+                self._model = WhisperModel(
+                    str(model_path),
+                    device="cpu",
+                    compute_type=self.compute_type,
+                    local_files_only=local_only,
                 )
-                model_path = _download_model(self.model_name)
-            elif self.verbose:
-                self.progress(f"loading cached model {self.model_name!r}")
-            started = time.perf_counter()
-            self._model = WhisperModel(
-                str(model_path),
-                device="cpu",
-                compute_type=self.compute_type,
-            )
-            if self.verbose:
-                self.progress(f"model ready in {time.perf_counter() - started:.2f}s")
+                self.last_load_seconds = time.perf_counter() - load_started
+                if self.verbose:
+                    self.progress(f"model ready in {self.last_load_seconds:.2f}s")
         return self._model
+
+    def preload(self, local_only: bool = False) -> float:
+        self._load(local_only=local_only)
+        return self.last_load_seconds
 
     def transcribe(
         self, audio: Any, sample_rate: int, language: str | None = None
@@ -70,9 +86,25 @@ class SttEngine:
                 vad_parameters={"threshold": 0.5},
                 no_speech_threshold=0.6,
             )
+        if "condition_on_previous_text" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            kwargs["condition_on_previous_text"] = False
         segments, _info = model.transcribe(audio, **kwargs)
-        text = " ".join(segment.text.strip() for segment in segments).strip()
+        text = _remove_repeated_text(
+            " ".join(segment.text.strip() for segment in segments).strip()
+        )
         return text, time.perf_counter() - started
+
+
+def _remove_repeated_text(text: str) -> str:
+    words = text.split()
+    for size in range(len(words) // 2, 0, -1):
+        midpoint = len(words) - size
+        if words[midpoint:] == words[midpoint - size : midpoint]:
+            return " ".join(words[:midpoint])
+    return text
 
 
 def _prepare_audio(audio: Any, sample_rate: int) -> Any:

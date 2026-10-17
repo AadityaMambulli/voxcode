@@ -19,6 +19,7 @@ class ListenResult:
     transcript: str
     record_seconds: float
     transcription_seconds: float
+    model_load_seconds: float = 0.0
 
 
 def speak(text: str, speak_fn: Callable[[str], TtsResult] = speak_text) -> TtsResult:
@@ -73,7 +74,12 @@ def listen(
     transcript, transcription_seconds = stt_engine.transcribe(
         audio, actual_sample_rate, language
     )
-    return ListenResult(transcript, record_seconds, transcription_seconds)
+    return ListenResult(
+        transcript,
+        record_seconds,
+        transcription_seconds,
+        getattr(stt_engine, "last_load_seconds", 0.0),
+    )
 
 
 def device_summary(config: Config) -> tuple[list[AudioDevice], AudioDevice | None, AudioDevice | None]:
@@ -134,6 +140,11 @@ def doctor(config: Config) -> list[tuple[str, bool, str]]:
         checks.append(("faster-whisper import", True, "imported"))
     except ImportError as exc:
         checks.append(("faster-whisper import", False, str(exc)))
+
+    from .ptt import ptt_readiness
+
+    ptt_ok, ptt_detail = ptt_readiness(config)
+    checks.append(("PTT readiness", ptt_ok, ptt_detail))
 
     engine, reasons = choose_engine()
     if engine is None:

@@ -48,7 +48,7 @@ def on() -> None:
                         {
                             "type": "command",
                             "command": f'"{python}" "${{CLAUDE_PLUGIN_ROOT}}/hooks/summarize_stop.py" --dev',
-                            "timeout": 30000,
+                            "timeout": 30,
                         }
                     ],
                 }

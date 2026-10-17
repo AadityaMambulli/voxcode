@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import platform
+import json
+import os
 import shutil
+import signal
 import subprocess
+import tempfile
+import time
 from dataclasses import dataclass
 
 
 _active_process: subprocess.Popen[str] | None = None
+_ACTIVE_FILE = os.path.join(tempfile.gettempdir(), "voxcode-tts-active.json")
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,7 @@ class SapiEngine(TtsEngine):
             )
             global _active_process
             _active_process = process
+            _register_process(process)
             process.communicate(text)
             if process.returncode:
                 raise RuntimeError(f"Windows SAPI exited with code {process.returncode}")
@@ -72,6 +79,7 @@ class SapiEngine(TtsEngine):
             raise RuntimeError(f"Windows SAPI failed: {exc}") from exc
         finally:
             _active_process = None
+            _clear_process(process.pid)
         return TtsResult(self.name, "System.Speech.Synthesis")
 
 
@@ -139,16 +147,119 @@ def _run_process(command: list[str]) -> None:
     global _active_process
     process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     _active_process = process
+    _register_process(process)
     try:
         _stdout, _stderr = process.communicate()
         if process.returncode:
             raise OSError(f"process exited with code {process.returncode}")
     finally:
         _active_process = None
+        _clear_process(process.pid)
+
+
+def _register_process(process: subprocess.Popen[str]) -> None:
+    payload = {"pid": process.pid, "started": time.time()}
+    try:
+        with open(_ACTIVE_FILE, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+    except OSError:
+        pass
+
+
+def _clear_process(pid: int) -> None:
+    try:
+        with open(_ACTIVE_FILE, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if payload.get("pid") == pid:
+            os.unlink(_ACTIVE_FILE)
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _shared_process() -> tuple[int, float] | None:
+    try:
+        with open(_ACTIVE_FILE, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        pid, started = int(payload["pid"]), float(payload["started"])
+        if os.name == "nt":
+            current = _windows_process_start(pid)
+            if current is None or abs(current - started) > 3:
+                return None
+        return pid, started
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _windows_process_start(pid: int) -> float | None:
+    if os.name != "nt":
+        return None
+    command = (
+        f"(Get-Process -Id {pid} -ErrorAction Stop).StartTime.ToUniversalTime()"
+        ".Subtract([datetime]'1970-01-01').TotalSeconds"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        return None
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             f"Get-Process -Id {pid} -ErrorAction SilentlyContinue"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _stop_shared_process(pid: int) -> bool:
+    if not _process_exists(pid):
+        return False
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except (NameError, OSError):
+        os.kill(pid, signal.SIGTERM)
+    return True
 
 
 def stop_speaking() -> bool:
-    if _active_process is None or _active_process.poll() is not None:
-        return False
-    _active_process.terminate()
-    return True
+    stopped = False
+    if _active_process is not None and _active_process.poll() is None:
+        _active_process.terminate()
+        stopped = True
+    shared = _shared_process()
+    if shared is not None:
+        pid, _started = shared
+        stopped = _stop_shared_process(pid) or stopped
+        if not _process_exists(pid):
+            try:
+                os.unlink(_ACTIVE_FILE)
+            except OSError:
+                pass
+    return stopped

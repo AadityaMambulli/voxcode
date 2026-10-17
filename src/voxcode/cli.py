@@ -9,6 +9,7 @@ from dataclasses import replace
 from .audio import list_devices
 from .config import Config, load_config, save_config
 from .core import doctor, listen, speak
+from .ptt import run_ptt
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     listen_parser.add_argument("--verbose", action="store_true")
     listen_parser.add_argument("--debug-vad", action="store_true")
     sub.add_parser("test", help="speak and transcribe a four-second recording")
+    sub.add_parser("ptt", help="run push-to-talk dictation")
     sub.add_parser("doctor", help="check the real local voice setup")
     sub.add_parser("setup", help="choose and save audio devices")
     config_parser = sub.add_parser("config", help="show configuration")
@@ -68,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"recording_seconds: {listened.record_seconds:.2f}")
             print(f"transcription_seconds: {listened.transcription_seconds:.2f}")
             return 0
+        if args.command == "ptt":
+            return run_ptt(config)
         if args.command == "doctor":
             return _doctor(config)
         if args.command == "setup":
@@ -136,6 +140,8 @@ def _hint(name: str) -> str:
         return "Install Piper, or use the platform fallback documented by voxcode."
     if "VAD" in name:
         return "Install with `pip install -e .[vad]`."
+    if "PTT" in name:
+        return "PTT requires Windows 10/11 and a free function key such as F9."
     if "Python" in name:
         return "Use a Python interpreter in the supported range >=3.10,<3.14."
     return "Review the reported reason."
