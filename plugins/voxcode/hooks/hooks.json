@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from \"voxcode[audio,stt,vad,mcp] @ git+https://github.com/__GITHUB_OWNER__/voxcode.git\" python \"${CLAUDE_PLUGIN_ROOT}/hooks/summarize_stop.py\""
+            "command": "uvx --from \"voxcode[audio,stt,vad,mcp] @ git+https://github.com/__GITHUB_OWNER__/voxcode.git\" python \"${CLAUDE_PLUGIN_ROOT}/hooks/summarize_stop.py\"",
+            "timeout": 30000
           }
         ]
       }

@@ -267,6 +267,15 @@ documented pre-warm command. Heavy audio and STT imports remain inside
 `create_server`; the top-level MCP module only imports the protocol server
 wrapper, so model loading remains lazy until the first `listen` call.
 
+Fix K hook behavior: Stop summaries use the first final-response paragraph,
+remove configurable boilerplate labels (defaulting to `Skipped`, `Risk`,
+`Verified`, `Note`, and `Next`), and cap spoken text at approximately 200
+characters on a sentence boundary. The hook writes metadata-only JSONL when
+`VOXCODE_HOOK_LOG` is set and uses a 30-second command timeout. The official
+hooks reference fetched for this milestone documents hook configuration and
+async behavior but did not state a default timeout or process-lifetime
+guarantee; the timeout is therefore explicit in the plugin configuration.
+
 These are intentionally not presented as verified:
 
 1. `https://code.claude.com/docs/en/plugins/marketplaces.md` returned HTTP 404.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import tomllib
+import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,9 @@ class Config:
     language: str | None = None
     vad_aggressiveness: int = 2
     silence_threshold: float = 0.01
+    hook_skip_labels: list[str] = field(
+        default_factory=lambda: ["Skipped", "Risk", "Verified", "Note", "Next"]
+    )
     config_version: int = 1
     legacy_ignored: bool = field(default=False, compare=False, repr=False)
     sources: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
@@ -76,6 +80,7 @@ def load_config(path: Path | None = None) -> Config:
         "output_device_hostapi", "sample_rate", "channels", "model",
         "compute_type", "vad_mode", "fixed_seconds", "silence_seconds",
         "voice_enabled", "language", "vad_aggressiveness", "silence_threshold",
+        "hook_skip_labels",
     ):
         if key in keys and key in data:
             values[key] = _value(data, key, getattr(defaults, key))
@@ -144,6 +149,7 @@ def save_config(
                 "channels", "model", "compute_type", "vad_mode",
                 "fixed_seconds", "silence_seconds", "voice_enabled",
                 "language", "vad_aggressiveness", "silence_threshold",
+                "hook_skip_labels",
             )
             if getattr(config, key) != getattr(defaults, key)
         }
@@ -153,6 +159,7 @@ def save_config(
         "output_device_hostapi", "sample_rate", "channels", "model",
         "compute_type", "vad_mode", "fixed_seconds", "silence_seconds",
         "voice_enabled", "language", "vad_aggressiveness", "silence_threshold",
+        "hook_skip_labels",
     ):
         if key in fields:
             value = getattr(config, key)
@@ -169,4 +176,6 @@ def _toml_value(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, str):
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    if isinstance(value, list):
+        return json.dumps(value)
     return str(value)

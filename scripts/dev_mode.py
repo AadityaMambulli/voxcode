@@ -48,6 +48,7 @@ def on() -> None:
                         {
                             "type": "command",
                             "command": f'"{python}" "${{CLAUDE_PLUGIN_ROOT}}/hooks/summarize_stop.py" --dev',
+                            "timeout": 30000,
                         }
                     ],
                 }
@@ -86,6 +87,7 @@ def off() -> None:
                             {
                                 "type": "command",
                                 "command": f'uvx --from "{PACKAGE_SPEC}" python "${{CLAUDE_PLUGIN_ROOT}}/hooks/summarize_stop.py"',
+                                "timeout": 30000,
                             }
                         ],
                     }

@@ -128,6 +128,7 @@ def choose_engine() -> tuple[TtsEngine | None, list[str]]:
 def speak(text: str) -> TtsResult:
     if not text.strip():
         raise ValueError("text must not be empty")
+    stop_speaking()
     engine, reasons = choose_engine()
     if engine is None:
         raise RuntimeError("No TTS engine available: " + "; ".join(reasons))

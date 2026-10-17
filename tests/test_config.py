@@ -64,6 +64,13 @@ def test_config_accepts_utf8_bom(tmp_path: Path) -> None:
 
 
 @pytest.mark.fake
+def test_config_round_trips_hook_skip_labels(tmp_path: Path) -> None:
+    path = tmp_path / "hook-labels.toml"
+    save_config(Config(hook_skip_labels=["Custom", "Next"]), path)
+    assert load_config(path).hook_skip_labels == ["Custom", "Next"]
+
+
+@pytest.mark.fake
 def test_config_parse_error_names_file(tmp_path: Path) -> None:
     path = tmp_path / "broken.toml"
     path.write_text("[voxcode\n", encoding="utf-8")
