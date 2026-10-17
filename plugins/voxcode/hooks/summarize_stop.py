@@ -11,6 +11,11 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+PACKAGE_SPEC = (
+    "voxcode[audio,stt,vad,mcp] @ "
+    "git+https://github.com/__GITHUB_OWNER__/voxcode.git"
+)
+
 
 def _last_assistant_text(transcript_path: str) -> str:
     last = ""
@@ -85,10 +90,17 @@ def main() -> int:
     if not isinstance(transcript_path, str):
         print("voxcode Stop hook: transcript_path was not provided", file=sys.stderr)
         return 0
-    summary = _redact(_last_assistant_text(transcript_path))
+    try:
+        summary = _redact(_last_assistant_text(transcript_path))
+    except OSError as exc:
+        print(f"voxcode Stop hook could not read transcript: {exc}", file=sys.stderr)
+        return 1
     if not summary:
         return 0
-    command = [sys.executable, "-m", "voxcode.cli", "speak", summary]
+    if "--dev" in sys.argv:
+        command = [sys.executable, "-m", "voxcode.cli", "speak", summary]
+    else:
+        command = ["uvx", "--from", PACKAGE_SPEC, "voxcode", "speak", summary]
     env = dict(os.environ)
     try:
         subprocess.run(command, check=True, env=env)

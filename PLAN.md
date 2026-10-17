@@ -257,6 +257,16 @@ but the fetched docs do not verify `uvx` behavior or guarantee that a
 marketplace copy contains the marketplace root and its `src/` tree; that
 networked launch was not run here.
 
+M3 local-development decision: `scripts/dev_mode.py on` rewrites the plugin MCP
+and Stop-hook commands to absolute paths inside this checkout's `.venv`;
+`scripts/dev_mode.py off` restores the committed uvx launch exactly. The
+repository validator refuses to pass while the dev marker exists. For a
+first networked launch, Claude Code's documented `MCP_TIMEOUT` environment
+variable can be set to `120000` milliseconds, and `voxcode doctor` is the
+documented pre-warm command. Heavy audio and STT imports remain inside
+`create_server`; the top-level MCP module only imports the protocol server
+wrapper, so model loading remains lazy until the first `listen` call.
+
 These are intentionally not presented as verified:
 
 1. `https://code.claude.com/docs/en/plugins/marketplaces.md` returned HTTP 404.

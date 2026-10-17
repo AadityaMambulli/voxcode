@@ -10,14 +10,14 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from . import core
-from .audio import AudioDevice
-from .config import Config, load_config, save_config
-from .stt import SttEngine
-from .tts import TtsResult, speak as tts_speak
 
+def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
+    from . import core
+    from .audio import AudioDevice
+    from .config import load_config, save_config
+    from .stt import SttEngine
+    from .tts import TtsResult, speak as tts_speak
 
-def create_server(fake: bool = False, stt_engine: SttEngine | None = None) -> FastMCP:
     config = load_config()
     mcp = FastMCP("voxcode")
     shared_stt = stt_engine or (

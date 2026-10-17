@@ -20,6 +20,10 @@ def load(path: Path) -> dict:
 
 
 def main() -> int:
+    marker = ROOT / "plugins" / "voxcode" / ".dev-mode"
+    if marker.exists():
+        print("error: dev mode is enabled; run `python scripts/dev_mode.py off`")
+        return 1
     marketplace = load(ROOT / ".claude-plugin" / "marketplace.json")
     plugin = load(ROOT / "plugins" / "voxcode" / ".claude-plugin" / "plugin.json")
     if marketplace.get("name") != "voxcode":

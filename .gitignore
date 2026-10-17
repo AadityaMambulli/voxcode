@@ -13,3 +13,8 @@ models/
 .m1-empty-appdata/
 .m1-timing-appdata/
 .language-check/
+.dev-mode
+plugins/voxcode/.dev-mode
+.claude/settings.local.json
+.claude/settings.json
+.claude/
