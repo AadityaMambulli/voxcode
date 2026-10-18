@@ -3,6 +3,7 @@ import threading
 import pytest
 
 from voxcode.config import Config
+from voxcode import ptt
 from voxcode.ptt import key_code, run_ptt, sanitize_transcript
 
 
@@ -91,3 +92,42 @@ def test_ptt_toggle_stops_and_types_once(monkeypatch) -> None:
     )
     assert typed == ["one phrase"]
     assert calls and calls[0].is_set()
+
+
+@pytest.mark.fake
+def test_ptt_sendinput_failure_copies_transcript(monkeypatch) -> None:
+    class Device:
+        index = 3
+        name = "fake microphone"
+
+    class FakeHotkey:
+        def events(self, mode):
+            yield "press"
+            yield "release"
+
+    class FakeStt:
+        def preload(self, local_only=False):
+            pass
+
+        def transcribe(self, audio, sample_rate, language):
+            return "hello world", 0.01
+
+    messages: list[str] = []
+    copied: list[str] = []
+    monkeypatch.setattr(
+        "voxcode.ptt.select_device",
+        lambda configured, direction, hostapi=None: (Device(), "fake"),
+    )
+    monkeypatch.setattr(ptt, "_send_input_events", lambda inputs: 0)
+    monkeypatch.setattr(ptt, "copy_to_clipboard", copied.append)
+    run_ptt(
+        Config(),
+        stt=FakeStt(),
+        hotkey=FakeHotkey(),
+        recorder=lambda **kwargs: ("audio", 16000),
+        typer=ptt.type_text,
+        progress=messages.append,
+    )
+    assert copied == ["hello world"]
+    assert "transcript: hello world" in messages
+    assert "typing failed; text copied to clipboard, press Ctrl+V" in messages

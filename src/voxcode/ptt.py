@@ -23,6 +23,9 @@ _INPUT_KEYBOARD = 1
 _KEYEVENTF_UNICODE = 0x0004
 _KEYEVENTF_KEYUP = 0x0002
 _VK_RETURN = 0x0D
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
+_GMEM_ZEROINIT = 0x0040
 
 
 def key_code(name: str) -> int:
@@ -40,29 +43,67 @@ def sanitize_transcript(text: str, max_chars: int) -> str:
     return re.sub(r" {2,}", " ", cleaned).strip()[:max_chars]
 
 
+_ULONG_PTR = ctypes.c_void_p
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.wintypes.LONG),
+        ("dy", ctypes.wintypes.LONG),
+        ("mouseData", ctypes.wintypes.DWORD),
+        ("dwFlags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
 class _KEYBDINPUT(ctypes.Structure):
     _fields_ = [
         ("wVk", ctypes.c_ushort),
         ("wScan", ctypes.c_ushort),
-        ("dwFlags", ctypes.c_ulong),
-        ("time", ctypes.c_ulong),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ("dwFlags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", ctypes.wintypes.DWORD),
+        ("wParamL", ctypes.wintypes.WORD),
+        ("wParamH", ctypes.wintypes.WORD),
     ]
 
 
 class _INPUTUNION(ctypes.Union):
-    _fields_ = [("ki", _KEYBDINPUT)]
+    _fields_ = [
+        ("mi", _MOUSEINPUT),
+        ("ki", _KEYBDINPUT),
+        ("hi", _HARDWAREINPUT),
+    ]
 
 
 class _INPUT(ctypes.Structure):
     _anonymous_ = ("u",)
-    _fields_ = [("type", ctypes.c_ulong), ("u", _INPUTUNION)]
+    _fields_ = [("type", ctypes.wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+def _send_input_events(inputs: list[_INPUT]) -> int:
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    send_input = user32.SendInput
+    send_input.argtypes = (
+        ctypes.wintypes.UINT,
+        ctypes.POINTER(_INPUT),
+        ctypes.c_int,
+    )
+    send_input.restype = ctypes.wintypes.UINT
+    input_array = (_INPUT * len(inputs))(*inputs)
+    return int(send_input(len(inputs), input_array, ctypes.sizeof(_INPUT)))
 
 
 def type_text(text: str, auto_submit: bool = False) -> None:
     if sys.platform != "win32":
         raise RuntimeError("foreground typing is not supported on this platform yet")
-    user32 = ctypes.windll.user32
     inputs: list[_INPUT] = []
     for char in text:
         inputs.append(
@@ -103,11 +144,62 @@ def type_text(text: str, auto_submit: bool = False) -> None:
             ]
         )
     if inputs:
-        sent = user32.SendInput(
-            len(inputs), (_INPUT * len(inputs))(*inputs), ctypes.sizeof(_INPUT)
-        )
+        sent = _send_input_events(inputs)
         if sent != len(inputs):
-            raise RuntimeError(f"SendInput typed {sent} of {len(inputs)} keyboard events")
+            error = ctypes.get_last_error()
+            raise RuntimeError(
+                f"SendInput typed {sent} of {len(inputs)} keyboard events "
+                f"(WinError {error}: {ctypes.WinError(error)})"
+            )
+
+
+def copy_to_clipboard(text: str) -> None:
+    if sys.platform != "win32":
+        raise RuntimeError("clipboard fallback is not supported on this platform yet")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32.GlobalAlloc.argtypes = [ctypes.wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [ctypes.wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = ctypes.wintypes.BOOL
+    kernel32.GlobalFree.argtypes = [ctypes.wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = ctypes.wintypes.HGLOBAL
+    user32.OpenClipboard.argtypes = [ctypes.wintypes.HWND]
+    user32.OpenClipboard.restype = ctypes.wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = ctypes.wintypes.BOOL
+    user32.SetClipboardData.argtypes = [
+        ctypes.wintypes.UINT,
+        ctypes.wintypes.HANDLE,
+    ]
+    user32.SetClipboardData.restype = ctypes.wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = ctypes.wintypes.BOOL
+    encoded = (text + "\x00").encode("utf-16-le")
+    memory = kernel32.GlobalAlloc(_GMEM_MOVEABLE | _GMEM_ZEROINIT, len(encoded))
+    if not memory:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        locked = kernel32.GlobalLock(memory)
+        if not locked:
+            raise ctypes.WinError(ctypes.get_last_error())
+        ctypes.memmove(locked, encoded, len(encoded))
+        kernel32.GlobalUnlock(memory)
+        if not user32.OpenClipboard(None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if not user32.EmptyClipboard():
+                raise ctypes.WinError(ctypes.get_last_error())
+            if not user32.SetClipboardData(_CF_UNICODETEXT, memory):
+                raise ctypes.WinError(ctypes.get_last_error())
+            memory = None
+        finally:
+            user32.CloseClipboard()
+    finally:
+        if memory:
+            kernel32.GlobalFree(memory)
 
 
 class WindowsHotkey:
@@ -219,8 +311,19 @@ def run_ptt(
         transcript, _seconds = engine.transcribe(audio, sample_rate, config.language)
         text = sanitize_transcript(transcript, config.ptt_max_chars)
         if text:
-            typer(text, config.ptt_auto_submit)
-            progress(f"typed {len(text)} characters")
+            progress(f"transcript: {text}")
+            try:
+                typer(text, config.ptt_auto_submit)
+            except Exception as exc:
+                progress(f"typing failed: {exc}")
+                try:
+                    copy_to_clipboard(text)
+                except Exception as clipboard_exc:
+                    progress(f"clipboard fallback failed: {clipboard_exc}")
+                else:
+                    progress("typing failed; text copied to clipboard, press Ctrl+V")
+            else:
+                progress(f"typed {len(text)} characters")
         else:
             progress("empty transcript; nothing typed")
         if config.ptt_beep:

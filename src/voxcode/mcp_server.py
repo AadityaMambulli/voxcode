@@ -47,7 +47,11 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
     mcp = FastMCP("voxcode", lifespan=lifespan)
     fake_device = AudioDevice(0, "fake microphone", 1, 0, "fake", True, False)
 
-    def fake_select(_configured: Any, _direction: str) -> tuple[AudioDevice, str]:
+    def fake_select(
+        _configured: Any,
+        _direction: str,
+        _hostapi: str | None = None,
+    ) -> tuple[AudioDevice, str]:
         return fake_device, "explicit fake backend"
 
     def fake_record(**_kwargs: Any) -> tuple[str, int]:
