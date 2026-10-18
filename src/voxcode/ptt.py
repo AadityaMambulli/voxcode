@@ -203,6 +203,10 @@ def copy_to_clipboard(text: str) -> None:
 
 
 class WindowsHotkey:
+    name: str
+    virtual_key: int
+    _id: int
+
     def __init__(self, name: str) -> None:
         if sys.platform != "win32":
             raise RuntimeError("PTT hotkeys are not supported on this platform yet")
@@ -261,7 +265,13 @@ def run_ptt(
     typer: Callable[[str, bool], None] = type_text,
     progress: Callable[[str], None] = print,
 ) -> int:
-    if sys.platform != "win32":
+    injected_backend = (
+        hotkey is not None
+        or stt is not None
+        or recorder is not record_until_stopped
+        or typer is not type_text
+    )
+    if sys.platform != "win32" and not injected_backend:
         progress("[FAIL] PTT is not supported on this platform yet (Windows only)")
         return 1
     key_code(config.ptt_key)

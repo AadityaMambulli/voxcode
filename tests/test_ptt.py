@@ -131,3 +131,48 @@ def test_ptt_sendinput_failure_copies_transcript(monkeypatch) -> None:
     assert copied == ["hello world"]
     assert "transcript: hello world" in messages
     assert "typing failed; text copied to clipboard, press Ctrl+V" in messages
+
+
+@pytest.mark.fake
+def test_ptt_fakes_run_on_non_windows(monkeypatch) -> None:
+    monkeypatch.setattr(ptt.sys, "platform", "linux")
+    messages: list[str] = []
+
+    class Device:
+        index = 3
+        name = "fake microphone"
+
+    class FakeHotkey:
+        def events(self, mode):
+            yield "press"
+            yield "release"
+
+    class FakeStt:
+        def preload(self, local_only=False):
+            pass
+
+        def transcribe(self, audio, sample_rate, language):
+            return "portable fake", 0.01
+
+    monkeypatch.setattr(
+        "voxcode.ptt.select_device",
+        lambda configured, direction, hostapi=None: (Device(), "fake"),
+    )
+    typed: list[str] = []
+    assert run_ptt(
+        Config(),
+        stt=FakeStt(),
+        hotkey=FakeHotkey(),
+        recorder=lambda **kwargs: ("audio", 16000),
+        typer=lambda text, submit: typed.append(text),
+        progress=messages.append,
+    ) == 0
+    assert typed == ["portable fake"]
+
+
+@pytest.mark.fake
+def test_ptt_real_path_refuses_non_windows(monkeypatch) -> None:
+    monkeypatch.setattr(ptt.sys, "platform", "linux")
+    messages: list[str] = []
+    assert run_ptt(Config(), progress=messages.append) == 1
+    assert messages == ["[FAIL] PTT is not supported on this platform yet (Windows only)"]
