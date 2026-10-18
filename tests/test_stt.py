@@ -32,3 +32,24 @@ def test_stt_creates_model_once(monkeypatch, tmp_path: Path) -> None:
     assert engine.transcribe(audio, 16000, "en")[0] == "hello"
     assert engine.transcribe(audio, 16000, "en")[0] == "hello"
     assert len(calls) == 1
+
+
+@pytest.mark.fake
+def test_stt_cached_preload_is_local_only(monkeypatch, tmp_path: Path) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    calls = []
+
+    class FakeModel:
+        def __init__(self, path, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr("voxcode.stt._cached_model_path", lambda model: model_dir)
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        types.SimpleNamespace(WhisperModel=FakeModel),
+    )
+    engine = SttEngine(progress=lambda _: None)
+    engine.preload(local_only=True)
+    assert calls == [{"device": "cpu", "compute_type": "int8", "local_files_only": True}]

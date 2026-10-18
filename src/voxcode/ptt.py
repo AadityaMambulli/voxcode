@@ -274,7 +274,12 @@ def run_ptt(
     )
     if selected is None:
         raise RuntimeError("No input device is available for PTT; run `voxcode devices`")
-    engine = stt or SttEngine(config.model, config.compute_type, progress)
+    engine = stt or SttEngine(
+        config.model,
+        config.compute_type,
+        progress,
+        local_only=True,
+    )
     preload = getattr(engine, "preload", None)
     if preload is not None:
         preload(local_only=True)

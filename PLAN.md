@@ -15,8 +15,7 @@ Build `voxcode`, a local-first voice mode for terminal coding agents:
 
 ## Repository and runtime decisions
 
-- Keep all files under the repository root, which was verified as
-  `C:\Users\mambu\OneDrive\Desktop\MyProjects\voxcode`.
+- Keep all source, test, and documentation files under the repository root.
 - Use a `src/voxcode/` Python package and a `pyproject.toml` console-script entry
   point named `voxcode`.
 - Keep the package's base dependencies small; put speech recognition dependencies

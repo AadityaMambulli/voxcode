@@ -28,13 +28,14 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
             config.model,
             config.compute_type,
             progress=lambda message: print(message, file=sys.stderr, flush=True),
+            local_only=True,
         )
     )
 
     def preload_model() -> None:
         if shared_stt is not None:
             try:
-                shared_stt._load()
+                shared_stt.preload(local_only=True)
             except RuntimeError as exc:
                 print(f"model preload failed: {exc}", file=sys.stderr, flush=True)
 

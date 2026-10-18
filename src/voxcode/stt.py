@@ -17,17 +17,22 @@ class SttEngine:
         compute_type: str = "int8",
         progress: Callable[[str], None] = print,
         verbose: bool = False,
+        local_only: bool = False,
     ) -> None:
         self.model_name = model
         self.compute_type = compute_type
         self.progress = progress
         self.verbose = verbose
+        self.local_only = local_only
         self._model: Any = None
         self.last_load_seconds = 0.0
         self._load_lock = threading.Lock()
 
-    def _load(self, local_only: bool = False) -> Any:
+    def _load(self, local_only: bool | None = None) -> Any:
         load_started = time.perf_counter()
+        effective_local_only = (
+            self.local_only if local_only is None else local_only
+        )
         with self._load_lock:
             if self._model is None:
                 try:
@@ -38,7 +43,7 @@ class SttEngine:
                     ) from exc
                 model_path = _cached_model_path(self.model_name)
                 if model_path is None:
-                    if local_only:
+                    if effective_local_only:
                         raise RuntimeError(
                             f"faster-whisper model {self.model_name!r} is not cached; "
                             "run `voxcode listen` once while online before starting PTT"
@@ -55,7 +60,7 @@ class SttEngine:
                     str(model_path),
                     device="cpu",
                     compute_type=self.compute_type,
-                    local_files_only=local_only,
+                    local_files_only=effective_local_only,
                 )
                 self.last_load_seconds = time.perf_counter() - load_started
                 if self.verbose:
@@ -63,6 +68,8 @@ class SttEngine:
         return self._model
 
     def preload(self, local_only: bool = False) -> float:
+        if local_only:
+            self.local_only = True
         self._load(local_only=local_only)
         return self.last_load_seconds
 
