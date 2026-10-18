@@ -6,7 +6,7 @@ Tell the user to pre-warm the server before the first voice call:
 
 ```powershell
 $env:MCP_TIMEOUT = "120000"
-uvx --from "voxcode[audio,stt,vad,mcp] @ git+https://github.com/__GITHUB_OWNER__/voxcode.git" voxcode doctor
+uvx --from "voxcode[audio,stt,vad,mcp] @ git+https://github.com/AadityaMambulli/voxcode.git" voxcode doctor
 ```
 
 `MCP_TIMEOUT` is Claude Code's documented global stdio-MCP startup timeout,

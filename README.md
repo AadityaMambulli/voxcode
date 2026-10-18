@@ -19,11 +19,10 @@ uv pip install "voxcode[audio,stt,vad,mcp]"
 Inside Claude Code, add the published marketplace and install the plugin:
 
 ```text
-/plugin marketplace add OWNER/voxcode
+/plugin marketplace add AadityaMambulli/voxcode
 /plugin install voxcode@voxcode
 ```
 
-Replace `OWNER` with the GitHub owner of the published repository. The plugin
 provides voice commands, the MCP server, and a Stop hook. The MCP server uses
 local audio and speech recognition; it does not send audio or transcripts to a
 paid voice API.
@@ -31,7 +30,7 @@ paid voice API.
 ### Push-to-talk from any terminal harness
 
 ```powershell
-uvx --from "voxcode[audio,stt,vad,mcp] @ git+https://github.com/OWNER/voxcode.git" voxcode ptt
+uvx --from "voxcode[audio,stt,vad,mcp] @ git+https://github.com/AadityaMambulli/voxcode.git" voxcode ptt
 ```
 
 On Windows, hold **F9**, speak, and release it. The transcript is typed into

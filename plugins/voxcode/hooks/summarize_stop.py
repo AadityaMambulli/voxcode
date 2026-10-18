@@ -13,7 +13,7 @@ from typing import Any
 
 PACKAGE_SPEC = (
     "voxcode[audio,stt,vad,mcp] @ "
-    "git+https://github.com/__GITHUB_OWNER__/voxcode.git"
+    "git+https://github.com/AadityaMambulli/voxcode.git"
 )
 DEFAULT_SKIP_LABELS = ["Skipped", "Risk", "Verified", "Note", "Next"]
 

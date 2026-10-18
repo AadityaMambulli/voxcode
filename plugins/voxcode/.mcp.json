@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "voxcode[audio,stt,vad,mcp] @ git+https://github.com/__GITHUB_OWNER__/voxcode.git",
+        "voxcode[audio,stt,vad,mcp] @ git+https://github.com/AadityaMambulli/voxcode.git",
         "voxcode-mcp"
       ],
       "env": {
