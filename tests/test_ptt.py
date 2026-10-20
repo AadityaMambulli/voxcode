@@ -229,3 +229,24 @@ def test_ptt_download_failure_reports_retry_command(monkeypatch) -> None:
     assert run_ptt(Config(), progress=messages.append) == 1
     assert "PTT model download failed: offline" in messages[0]
     assert "uvx --from" in messages[0]
+
+
+@pytest.mark.fake
+def test_ptt_standalone_reports_plugin_owned_hotkey(monkeypatch) -> None:
+    class OwnedHotkey:
+        def events(self, _mode):
+            raise RuntimeError("could not register global hotkey F9; it may be in use")
+            yield "press"
+
+    monkeypatch.setattr(ptt, "select_device", lambda *args: (type("D", (), {"index": 3, "name": "fake"})(), "fake"))
+    messages: list[str] = []
+    assert run_ptt(
+        Config(),
+        stt=type("Stt", (), {"preload": lambda self, local_only=True: None})(),
+        hotkey=OwnedHotkey(),
+        progress=messages.append,
+    ) == 1
+    assert any(
+        "plugin listener or another process already owns F9" in message
+        for message in messages
+    )

@@ -20,8 +20,9 @@ DEFAULT_DOWNLOAD_STALL_TIMEOUT_SECONDS = 600
 
 def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
     from . import core
-    from .audio import AudioDevice
+    from .audio import AudioDevice, record_until_stopped
     from .config import load_config, save_config
+    from .ptt import PttListener
     from .stt import (
         SttEngine,
         _cached_model_path,
@@ -31,8 +32,19 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
     from .tts import TtsResult, speak as tts_speak
 
     config = load_config()
+    class FakeStt:
+        _model = object()
+
+        def preload(self, local_only: bool = True) -> float:
+            return 0.0
+
+        def transcribe(
+            self, audio: Any, sample_rate: int, language: str | None = None
+        ) -> tuple[str, float]:
+            return f"fake transcript ({audio}, {sample_rate}Hz)", 0.001
+
     shared_stt = stt_engine or (
-        None
+        FakeStt()
         if fake
         else SttEngine(
             config.model,
@@ -42,6 +54,10 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
         )
     )
     download_lock = threading.Lock()
+    ptt_listener: PttListener | None = None
+    ptt_timer: threading.Timer | None = None
+    ptt_status = "disabled"
+    ptt_last_transcript = ""
     download_state: dict[str, str] = {"status": "ready", "detail": ""}
     if not fake and _cached_model_path(config.model) is None:
         download_state = {
@@ -195,14 +211,86 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
                 return
         threading.Thread(target=download_in_background, daemon=True).start()
 
+    def ptt_progress(message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+
+    def ptt_model_ready() -> bool:
+        return fake or getattr(shared_stt, "_model", None) is not None
+
+    def start_ptt() -> None:
+        nonlocal ptt_listener, ptt_status
+        if not config.ptt_autostart or ptt_listener is not None:
+            return
+        if fake:
+            class FakeHotkey:
+                def events(self, _mode: str):
+                    yield "press"
+                    yield "release"
+
+            fake_hotkey: Any = FakeHotkey()
+            fake_recorder = fake_record
+            def fake_typer(text: str, _submit: bool) -> None:
+                nonlocal ptt_last_transcript
+                ptt_last_transcript = text
+                ptt_progress(f"typed: {text}")
+        else:
+            fake_hotkey = None
+            fake_recorder = core.record_until_stopped
+            from .ptt import type_text
+
+            fake_typer = type_text
+        listener_config = replace(
+            config,
+            ptt_beep=config.ptt_beep
+            if config.sources.get("ptt_beep") in {"file", "environment"}
+            else True,
+        )
+        ptt_listener = PttListener(
+            listener_config,
+            shared_stt if shared_stt is not None else FakeStt(),
+            hotkey=fake_hotkey,
+            recorder=fake_recorder,
+            typer=fake_typer,
+            progress=ptt_progress,
+            model_ready=ptt_model_ready,
+            hosted=True,
+        )
+        ptt_listener.start()
+        ptt_status = (
+            "waiting_for_model" if not ptt_model_ready() else ptt_listener.status
+        )
+
+    def stop_ptt() -> None:
+        nonlocal ptt_listener, ptt_status
+        if ptt_listener is not None:
+            ptt_listener.stop()
+            ptt_status = "disabled"
+            ptt_listener = None
+
+    def refresh_ptt_status() -> str:
+        nonlocal ptt_status
+        if ptt_listener is not None:
+            ptt_status = ptt_listener.status
+            if not ptt_model_ready() and ptt_status in {"active", "disabled"}:
+                ptt_status = "waiting_for_model"
+        return ptt_status
+
     @asynccontextmanager
     async def lifespan(_server: FastMCP[Any]):
+        nonlocal ptt_timer
         if shared_stt is not None and not fake:
             if _cached_model_path(config.model) is None:
                 start_download_if_needed()
             else:
                 threading.Thread(target=preload_model, daemon=True).start()
+        if config.ptt_autostart:
+            ptt_timer = threading.Timer(0.2, start_ptt)
+            ptt_timer.daemon = True
+            ptt_timer.start()
         yield {}
+        if ptt_timer is not None:
+            ptt_timer.cancel()
+        stop_ptt()
 
     mcp = FastMCP("voxcode", lifespan=lifespan)
     fake_device = AudioDevice(0, "fake microphone", 1, 0, "fake", True, False)
@@ -216,12 +304,6 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
 
     def fake_record(**_kwargs: Any) -> tuple[str, int]:
         return "fake audio", 16000
-
-    class FakeStt:
-        def transcribe(
-            self, audio: Any, sample_rate: int, language: str | None = None
-        ) -> tuple[str, float]:
-            return f"fake transcript ({audio}, {sample_rate}Hz)", 0.001
 
     def fake_speak(text: str) -> TtsResult:
         return TtsResult("fake", text)
@@ -305,6 +387,8 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
             "language": config.language,
             "tts_engine": "fake" if fake else (engine.name if engine else None),
             "tts_reasons": reasons,
+            "ptt": refresh_ptt_status(),
+            "ptt_transcript": ptt_last_transcript if fake else None,
         }
 
     @mcp.tool()
@@ -320,6 +404,8 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
         silence_seconds: float | None = None,
         voice_enabled: bool | None = None,
         language: str | None = None,
+        ptt_autostart: bool | None = None,
+        ptt_beep: bool | None = None,
     ) -> dict[str, Any]:
         """Update and persist provided voice configuration values."""
         nonlocal config
@@ -333,6 +419,8 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
                 "silence_seconds": silence_seconds,
                 "voice_enabled": voice_enabled,
                 "language": language,
+                "ptt_autostart": ptt_autostart,
+                "ptt_beep": ptt_beep,
             }.items()
             if value is not None
         }
@@ -357,6 +445,10 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
                 )
                 updates.pop("output_device", None)
         config = replace(config, **updates)
+        if ptt_autostart is False:
+            stop_ptt()
+        elif ptt_autostart is True and ptt_listener is None:
+            start_ptt()
         if config.voice_enabled and not fake:
             threading.Thread(target=preload_model, daemon=True).start()
         path = save_config(

@@ -257,6 +257,164 @@ def ptt_readiness(config: Config) -> tuple[bool, str]:
     return True, f"{config.ptt_key} can be registered without administrator rights"
 
 
+class PttListener:
+    def __init__(
+        self,
+        config: Config,
+        stt: Any,
+        hotkey: Any | None = None,
+        recorder: Callable[..., tuple[Any, int]] = record_until_stopped,
+        typer: Callable[[str, bool], None] = type_text,
+        progress: Callable[[str], None] = print,
+        model_ready: Callable[[], bool] | None = None,
+        hosted: bool = False,
+        on_transcript: Callable[[str], None] | None = None,
+    ) -> None:
+        self.config = config
+        self.stt = stt
+        self.hotkey = hotkey or WindowsHotkey(config.ptt_key)
+        self.recorder = recorder
+        self.typer = typer
+        self.progress = progress
+        self.model_ready = model_ready or (lambda: True)
+        self.hosted = hosted
+        self.on_transcript = on_transcript
+        self.status = "disabled"
+        self.error: str | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._capture_stop: threading.Event | None = None
+        self._worker: threading.Thread | None = None
+
+    def start(self) -> None:
+        if sys.platform != "win32" and isinstance(self.hotkey, WindowsHotkey):
+            self.status = "unsupported_platform"
+            return
+        self.status = "active" if self.model_ready() else "waiting_for_model"
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._capture_stop is not None:
+            self._capture_stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        if self._worker is not None:
+            self._worker.join(timeout=5)
+        if self.status == "active":
+            self.status = "disabled"
+
+    def _run(self) -> None:
+        try:
+            active = False
+            for event in self.hotkey.events(self.config.ptt_mode):
+                if self._stop.is_set():
+                    break
+                if event == "press":
+                    if not self.model_ready():
+                        self.status = "waiting_for_model"
+                        _beep(440)
+                        continue
+                    if self.config.ptt_mode == "toggle" and active:
+                        self._finish_capture()
+                        active = False
+                    else:
+                        active = True
+                        self.status = "active"
+                        self._start_capture()
+                elif event == "release" and active:
+                    active = False
+                    self._finish_capture()
+            if self.status == "active":
+                self.status = "disabled"
+        except RuntimeError as exc:
+            self.error = str(exc)
+            self.status = (
+                "owned_by_another_process"
+                if "in use" in str(exc).lower() or "register" in str(exc).lower()
+                else "error"
+            )
+            self.progress(
+                "PTT unavailable: plugin listener or another process already owns "
+                f"{self.config.ptt_key}"
+                if self.status == "owned_by_another_process"
+                else f"PTT error: {exc}"
+            )
+
+    def _start_capture(self) -> None:
+        self._capture_stop = threading.Event()
+        self._worker = threading.Thread(
+            target=self._process_capture,
+            args=(self._capture_stop,),
+            daemon=True,
+        )
+        self._worker.start()
+
+    def _finish_capture(self) -> None:
+        if self._capture_stop is not None:
+            self._capture_stop.set()
+        if self._worker is not None:
+            self._worker.join(timeout=5)
+
+    def _process_capture(self, capture_stop: threading.Event) -> None:
+        try:
+            if self.config.ptt_beep:
+                _beep(880)
+            self.progress("recording...")
+            audio, sample_rate = self.recorder(
+                sample_rate=self.config.sample_rate,
+                channels=self.config.channels,
+                device=self._device().index,
+                stop_event=capture_stop,
+                max_seconds=60.0,
+                progress=self.progress,
+            )
+            if self.config.ptt_beep:
+                _beep(660)
+            self.progress("transcribing...")
+            transcript, _seconds = self.stt.transcribe(
+                audio, sample_rate, self.config.language
+            )
+            text = sanitize_transcript(transcript, self.config.ptt_max_chars)
+            if not text:
+                self.progress("empty transcript; nothing typed")
+                return
+            if self.on_transcript is not None:
+                self.on_transcript(text)
+            self.progress(f"transcript: {text}")
+            try:
+                self.typer(text, self.config.ptt_auto_submit)
+            except Exception as exc:
+                self.progress(f"typing failed: {exc}")
+                try:
+                    copy_to_clipboard(text)
+                except Exception as clipboard_exc:
+                    self.progress(f"clipboard fallback failed: {clipboard_exc}")
+                else:
+                    self.progress(
+                        "typing failed; text copied to clipboard, press Ctrl+V"
+                    )
+            else:
+                self.progress(f"typed {len(text)} characters")
+        except Exception as exc:
+            self.error = str(exc)
+            self.status = "error"
+            self.progress(f"PTT capture failed: {exc}")
+            if self.config.ptt_beep:
+                _beep(440)
+
+    def _device(self) -> Any:
+        selected, _reason = select_device(
+            self.config.input_device_name or self.config.input_device,
+            "input",
+            self.config.input_device_hostapi,
+        )
+        if selected is None:
+            raise RuntimeError("No input device is available for PTT")
+        return selected
+
+
 def run_ptt(
     config: Config,
     stt: Any | None = None,
@@ -318,79 +476,18 @@ def run_ptt(
         f"(mode={config.ptt_mode}, input={selected.name}, chosen by {reason})"
     )
     progress("Press Ctrl+C to stop.")
-    backend = hotkey or WindowsHotkey(config.ptt_key)
-    stop_event: threading.Event | None = None
-    worker: threading.Thread | None = None
-
-    def start_capture() -> None:
-        nonlocal stop_event, worker
-        if worker is not None and worker.is_alive():
-            return
-        stop_event = threading.Event()
-        worker = threading.Thread(target=process_capture, args=(stop_event,), daemon=True)
-        worker.start()
-
-    def process_capture(capture_stop: threading.Event) -> None:
-        if config.ptt_beep:
-            _beep(880)
-        progress("recording...")
-        audio, sample_rate = recorder(
-            sample_rate=config.sample_rate,
-            channels=config.channels,
-            device=selected.index,
-            stop_event=capture_stop,
-            max_seconds=60.0,
-            progress=progress,
-        )
-        progress("transcribing...")
-        transcript, _seconds = engine.transcribe(audio, sample_rate, config.language)
-        text = sanitize_transcript(transcript, config.ptt_max_chars)
-        if text:
-            progress(f"transcript: {text}")
-            try:
-                typer(text, config.ptt_auto_submit)
-            except Exception as exc:
-                progress(f"typing failed: {exc}")
-                try:
-                    copy_to_clipboard(text)
-                except Exception as clipboard_exc:
-                    progress(f"clipboard fallback failed: {clipboard_exc}")
-                else:
-                    progress("typing failed; text copied to clipboard, press Ctrl+V")
-            else:
-                progress(f"typed {len(text)} characters")
-        else:
-            progress("empty transcript; nothing typed")
-        if config.ptt_beep:
-            _beep(660)
-
+    listener = PttListener(
+        config, engine, hotkey, recorder, typer, progress, hosted=False
+    )
     try:
-        active = False
-        for event in backend.events(config.ptt_mode):
-            if config.ptt_mode == "hold":
-                if event == "press":
-                    active = True
-                    start_capture()
-                elif event == "release" and active:
-                    active = False
-                    if stop_event is not None:
-                        stop_event.set()
-            elif event == "press":
-                if active:
-                    if stop_event is not None:
-                        stop_event.set()
-                    active = False
-                else:
-                    active = True
-                    start_capture()
-        if worker is not None:
-            worker.join(timeout=5)
+        listener.start()
+        if listener._thread is not None:
+            listener._thread.join()
     except KeyboardInterrupt:
-        if stop_event is not None:
-            stop_event.set()
-        if worker is not None:
-            worker.join(timeout=5)
+        listener.stop()
         progress("PTT stopped")
+    if listener.status in {"owned_by_another_process", "error"}:
+        return 1
     return 0
 
 

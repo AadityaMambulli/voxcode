@@ -51,6 +51,7 @@ class Config:
     ptt_auto_submit: bool = False
     ptt_beep: bool = False
     ptt_max_chars: int = 2000
+    ptt_autostart: bool = sys.platform == "win32"
     config_version: int = 1
     legacy_ignored: bool = field(default=False, compare=False, repr=False)
     sources: dict[str, str] = field(default_factory=dict, compare=False, repr=False)
@@ -119,6 +120,7 @@ def load_config(path: Path | None = None) -> Config:
         "ptt_auto_submit": os.getenv("VOXCODE_PTT_AUTO_SUBMIT"),
         "ptt_beep": os.getenv("VOXCODE_PTT_BEEP"),
         "ptt_max_chars": os.getenv("VOXCODE_PTT_MAX_CHARS"),
+        "ptt_autostart": os.getenv("VOXCODE_PTT_AUTOSTART"),
     }
     for key, value in env.items():
         if value is not None:
@@ -134,7 +136,7 @@ def load_config(path: Path | None = None) -> Config:
                 value = int(value)
             elif key == "silence_threshold":
                 value = float(value)
-            elif key in {"ptt_auto_submit", "ptt_beep"}:
+            elif key in {"ptt_auto_submit", "ptt_beep", "ptt_autostart"}:
                 value = value.lower() in {"1", "true", "yes", "on"}
             elif key == "ptt_max_chars":
                 value = int(value)
@@ -166,6 +168,7 @@ def save_config(
                 "language", "vad_aggressiveness", "silence_threshold",
                 "hook_skip_labels",
                 "ptt_key", "ptt_mode", "ptt_auto_submit", "ptt_beep", "ptt_max_chars",
+                "ptt_autostart",
             )
             if getattr(config, key) != getattr(defaults, key)
         }
@@ -177,6 +180,7 @@ def save_config(
         "voice_enabled", "language", "vad_aggressiveness", "silence_threshold",
         "hook_skip_labels",
         "ptt_key", "ptt_mode", "ptt_auto_submit", "ptt_beep", "ptt_max_chars",
+        "ptt_autostart",
     ):
         if key in fields:
             value = getattr(config, key)

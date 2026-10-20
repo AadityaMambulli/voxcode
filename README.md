@@ -112,6 +112,20 @@ override file values.
 | `ptt_auto_submit` | `false` | `VOXCODE_PTT_AUTO_SUBMIT` | Press Enter after typing |
 | `ptt_beep` | `false` | `VOXCODE_PTT_BEEP` | Start/stop beep |
 | `ptt_max_chars` | `2000` | `VOXCODE_PTT_MAX_CHARS` | Transcript typing cap |
+| `ptt_autostart` | `true` on Windows | `VOXCODE_PTT_AUTOSTART` | Start PTT inside the MCP plugin |
+
+### Push-to-talk starts automatically with the plugin
+
+On Windows, the Claude Code plugin starts the PTT listener inside its MCP
+server automatically. Hold **F9** to record and release it to transcribe and
+type into the focused window. Recording occurs only while F9 is held in the
+default `hold` mode. Enter is never pressed by default.
+
+Use `/voxcode:ptt-off` to disable the hosted listener and
+`/voxcode:ptt-on` to enable it again. PTT is independent of `voice_enabled`,
+which controls spoken replies. Only one listener can own F9 at a time: a second
+Claude Code session or a standalone `voxcode ptt` process reports that the key
+is already owned. macOS and Linux are untested.
 
 ## Troubleshooting
 
