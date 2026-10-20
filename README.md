@@ -38,7 +38,24 @@ the focused window. Enter is not pressed by default.
 
 The first run downloads the local faster-whisper model. Later runs use the
 cached snapshot. `voxcode ptt` loads the model once at startup and refuses to
-download a missing model while starting PTT.
+download a missing model without asking first; use `voxcode ptt --yes` to
+accept the download non-interactively.
+
+### First-run model download
+
+The `small` speech model is 486,215,847 bytes (486 MB / 463.7 MiB). It is downloaded once into
+the Hugging Face cache, can resume after an interruption, and is the only
+network use in the voice path. Audio and transcripts are not sent to the model
+provider. Pre-download and verify it before opening Claude Code:
+
+```powershell
+uvx --from "voxcode[audio,stt,vad,mcp] @ git+https://github.com/OWNER/voxcode.git" voxcode download-model --model small
+```
+
+The command prints progress, the downloaded size and cache location, and then
+loads the model locally with network access disabled to verify it. If you start
+the Claude Code MCP server first, it begins the same background download and
+temporarily returns a `downloading_model` status from `listen`.
 
 ## Per-harness setup
 

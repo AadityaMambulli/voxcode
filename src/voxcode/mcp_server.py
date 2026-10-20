@@ -3,21 +3,31 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import replace
 from contextlib import asynccontextmanager
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import TimeoutError
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+DEFAULT_DOWNLOAD_STALL_TIMEOUT_SECONDS = 600
 
 def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
     from . import core
     from .audio import AudioDevice
     from .config import load_config, save_config
-    from .stt import SttEngine
+    from .stt import (
+        SttEngine,
+        _cached_model_path,
+        download_model,
+        model_size_label,
+    )
     from .tts import TtsResult, speak as tts_speak
 
     config = load_config()
@@ -31,6 +41,16 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
             local_only=True,
         )
     )
+    download_lock = threading.Lock()
+    download_state: dict[str, str] = {"status": "ready", "detail": ""}
+    if not fake and _cached_model_path(config.model) is None:
+        download_state = {
+            "status": "missing",
+            "detail": (
+                f"Downloading speech model (~{model_size_label(config.model)}), "
+                "try again in a minute"
+            ),
+        }
 
     def preload_model() -> None:
         if shared_stt is not None:
@@ -39,10 +59,149 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
             except RuntimeError as exc:
                 print(f"model preload failed: {exc}", file=sys.stderr, flush=True)
 
+    def download_in_background() -> None:
+        with download_lock:
+            if download_state["status"] == "downloading":
+                return
+            download_state["status"] = "downloading"
+            download_state["detail"] = (
+                f"Downloading speech model (~{model_size_label(config.model)}), "
+                "try again in a minute"
+            )
+        started = time.perf_counter()
+        try:
+            stall_timeout = float(
+                os.environ.get(
+                    "VOXCODE_DOWNLOAD_STALL_TIMEOUT_SECONDS",
+                    str(DEFAULT_DOWNLOAD_STALL_TIMEOUT_SECONDS),
+                )
+            )
+            if stall_timeout <= 0:
+                raise ValueError
+        except ValueError:
+            with download_lock:
+                download_state["status"] = "download_failed"
+                download_state["detail"] = (
+                    "invalid VOXCODE_DOWNLOAD_STALL_TIMEOUT_SECONDS; "
+                    "use a positive number"
+                )
+            print(download_state["detail"], file=sys.stderr, flush=True)
+            return
+        last_progress = started
+        last_cache_size = 0
+        reconstruct_started: float | None = None
+        progress_lock = threading.Lock()
+
+        def cache_size() -> int:
+            cache_root = Path(
+                os.environ.get("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+            )
+            model_root = (
+                cache_root
+                / "hub"
+                / f"models--Systran--faster-whisper-{config.model}"
+            )
+            return sum(
+                path.stat().st_size
+                for path in model_root.rglob("*")
+                if path.is_file()
+            )
+
+        def report(message: str) -> None:
+            nonlocal last_progress, reconstruct_started
+            now = time.perf_counter()
+            with progress_lock:
+                last_progress = now
+                if "Reconstructing" in message and reconstruct_started is None:
+                    reconstruct_started = now
+            print(message, file=sys.stderr, flush=True)
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        download_error: Exception | None = None
+        try:
+            future = executor.submit(
+                download_model,
+                config.model,
+                report,
+            )
+            while True:
+                try:
+                    future.result(timeout=1.0)
+                    break
+                except FutureTimeoutError:
+                    now = time.perf_counter()
+                    current_cache_size = cache_size()
+                    with progress_lock:
+                        if current_cache_size > last_cache_size:
+                            last_cache_size = current_cache_size
+                            last_progress = now
+                        stalled_for = now - last_progress
+                    if stalled_for >= stall_timeout:
+                        raise RuntimeError(
+                            f"speech model download stalled for "
+                            f"{stall_timeout:g}s; "
+                            "partial files remain resumable"
+                        )
+            if shared_stt is not None:
+                shared_stt.preload(local_only=True)
+        except FutureTimeoutError:
+            download_error = RuntimeError("speech model download worker timed out")
+        except Exception as exc:
+            download_error = exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        if download_error is not None:
+            with download_lock:
+                download_state["status"] = "download_failed"
+                download_state["detail"] = (
+                    f"speech model download failed: {download_error}; "
+                    "retry the listen call"
+                )
+            print(
+                f"model download failed after {time.perf_counter() - started:.1f}s: "
+                f"{download_error}",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            completed = time.perf_counter()
+            reconstruction_seconds = (
+                completed - reconstruct_started
+                if reconstruct_started is not None
+                else 0.0
+            )
+            download_seconds = (
+                reconstruct_started - started
+                if reconstruct_started is not None
+                else completed - started
+            )
+            print(
+                f"model download complete: download_seconds={download_seconds:.1f}, "
+                f"reconstruct_seconds={reconstruction_seconds:.1f}",
+                file=sys.stderr,
+                flush=True,
+            )
+            with download_lock:
+                download_state["status"] = "ready"
+                download_state["detail"] = ""
+
+    def start_download_if_needed() -> None:
+        if fake or _cached_model_path(config.model) is not None:
+            return
+        with download_lock:
+            if download_state["status"] == "ready":
+                return
+            if download_state["status"] == "downloading":
+                return
+        threading.Thread(target=download_in_background, daemon=True).start()
+
     @asynccontextmanager
     async def lifespan(_server: FastMCP[Any]):
         if shared_stt is not None and not fake:
-            threading.Thread(target=preload_model, daemon=True).start()
+            if _cached_model_path(config.model) is None:
+                start_download_if_needed()
+            else:
+                threading.Thread(target=preload_model, daemon=True).start()
         yield {}
 
     mcp = FastMCP("voxcode", lifespan=lifespan)
@@ -72,6 +231,25 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
         """Record and transcribe speech for at most timeout_s seconds."""
         if timeout_s <= 0:
             return {"transcript": "", "error": "timeout_s must be positive"}
+        if not fake and _cached_model_path(config.model) is None:
+            start_download_if_needed()
+            with download_lock:
+                status = download_state["status"]
+                detail = download_state["detail"]
+            if status == "downloading" or status == "missing":
+                return {
+                    "transcript": "",
+                    "error": None,
+                    "status": "downloading_model",
+                    "detail": detail,
+                }
+            if status == "download_failed":
+                return {
+                    "transcript": "",
+                    "error": detail,
+                    "status": "download_failed",
+                    "detail": "Retry the listen call to try the download again",
+                }
         active_config = replace(config, fixed_seconds=timeout_s)
         executor = ThreadPoolExecutor(max_workers=1)
         future = executor.submit(

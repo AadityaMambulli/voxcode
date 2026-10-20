@@ -10,6 +10,7 @@ from .audio import list_devices
 from .config import Config, load_config, save_config
 from .core import doctor, listen, speak
 from .ptt import run_ptt
+from .stt import SttEngine, download_model
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,7 +24,16 @@ def build_parser() -> argparse.ArgumentParser:
     listen_parser.add_argument("--verbose", action="store_true")
     listen_parser.add_argument("--debug-vad", action="store_true")
     sub.add_parser("test", help="speak and transcribe a four-second recording")
-    sub.add_parser("ptt", help="run push-to-talk dictation")
+    ptt_parser = sub.add_parser("ptt", help="run push-to-talk dictation")
+    ptt_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="download the missing speech model without prompting",
+    )
+    download_parser = sub.add_parser(
+        "download-model", help="download and verify a local speech model"
+    )
+    download_parser.add_argument("--model", default="small")
     sub.add_parser("doctor", help="check the real local voice setup")
     sub.add_parser("setup", help="choose and save audio devices")
     config_parser = sub.add_parser("config", help="show configuration")
@@ -71,7 +81,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"transcription_seconds: {listened.transcription_seconds:.2f}")
             return 0
         if args.command == "ptt":
-            return run_ptt(config)
+            return run_ptt(config, download_yes=args.yes)
+        if args.command == "download-model":
+            path = download_model(
+                args.model,
+                progress=lambda message: print(message, flush=True),
+            )
+            engine = SttEngine(
+                args.model,
+                config.compute_type,
+                progress=lambda message: print(message, flush=True),
+                local_only=True,
+            )
+            load_seconds = engine.preload(local_only=True)
+            print(
+                f"[OK] speech model {args.model!r} verified from {path} "
+                f"in {load_seconds:.2f}s"
+            )
+            return 0
         if args.command == "doctor":
             return _doctor(config)
         if args.command == "setup":

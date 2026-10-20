@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,27 @@ def test_mcp_tool_progress_does_not_use_stdout(capsys: pytest.CaptureFixture[str
 
     captured = capsys.readouterr()
     assert captured.out == ""
+
+
+@pytest.mark.fake
+def test_mcp_reports_downloading_model(monkeypatch, tmp_path: Path) -> None:
+    class FakeStt:
+        def preload(self, local_only=False):
+            pass
+
+    monkeypatch.setenv("VOXCODE_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setattr("voxcode.stt._cached_model_path", lambda model: None)
+    download_started = threading.Event()
+    monkeypatch.setattr(
+        "voxcode.stt.download_model",
+        lambda model, progress: download_started.set() or threading.Event().wait(1),
+    )
+    server = create_server(fake=False, stt_engine=FakeStt())
+    listen_tool = server._tool_manager._tools["listen"].fn
+    result = listen_tool(timeout_s=1)
+    assert result["status"] == "downloading_model"
+    assert "speech model" in result["detail"].lower()
+    assert download_started.wait(1)
 
 
 @pytest.mark.hardware

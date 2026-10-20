@@ -14,7 +14,7 @@ from typing import Any
 
 from .audio import record_until_stopped, select_device
 from .config import Config
-from .stt import SttEngine
+from .stt import SttEngine, _cached_model_path, download_model, model_size_mb
 
 _KEY_CODES = {f"F{number}": 0x6F + number for number in range(1, 25)}
 _WM_HOTKEY = 0x0312
@@ -264,6 +264,7 @@ def run_ptt(
     recorder: Callable[..., tuple[Any, int]] = record_until_stopped,
     typer: Callable[[str, bool], None] = type_text,
     progress: Callable[[str], None] = print,
+    download_yes: bool = False,
 ) -> int:
     injected_backend = (
         hotkey is not None
@@ -290,6 +291,25 @@ def run_ptt(
         progress,
         local_only=True,
     )
+    if stt is None and _cached_model_path(config.model) is None:
+        if not download_yes:
+            answer = input(
+                f"Download speech model {config.model!r} "
+                f"(~{model_size_mb(config.model)} MB)? [Y/n] "
+            ).strip().lower()
+            if answer not in {"", "y", "yes"}:
+                progress("PTT cancelled; speech model was not downloaded")
+                return 1
+        try:
+            download_model(config.model, progress=progress)
+        except RuntimeError as exc:
+            progress(
+                f"PTT model download failed: {exc}. Retry with the full command: "
+                'uvx --from "voxcode[audio,stt,vad,mcp] @ '
+                'git+https://github.com/AadityaMambulli/voxcode.git" '
+                f"voxcode ptt --yes"
+            )
+            return 1
     preload = getattr(engine, "preload", None)
     if preload is not None:
         preload(local_only=True)

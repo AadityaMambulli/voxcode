@@ -9,6 +9,14 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+MODEL_SIZE_BYTES = {
+    "tiny": 75_000_000,
+    "base": 145_000_000,
+    "small": 486_215_847,
+    "medium": 1_500_000_000,
+    "large-v3": 3_000_000_000,
+}
+
 
 class SttEngine:
     def __init__(
@@ -46,7 +54,7 @@ class SttEngine:
                     if effective_local_only:
                         raise RuntimeError(
                             f"faster-whisper model {self.model_name!r} is not cached; "
-                            "run `voxcode listen` once while online before starting PTT"
+                            "download the speech model before starting this operation"
                         )
                     self.progress(
                         f"downloading faster-whisper model {self.model_name!r} "
@@ -60,7 +68,7 @@ class SttEngine:
                     str(model_path),
                     device="cpu",
                     compute_type=self.compute_type,
-                    local_files_only=effective_local_only,
+                    local_files_only=True,
                 )
                 self.last_load_seconds = time.perf_counter() - load_started
                 if self.verbose:
@@ -141,18 +149,71 @@ def _cached_model_path(model: str) -> Path | None:
     snapshots = cache / f"models--Systran--faster-whisper-{model}" / "snapshots"
     if not snapshots.exists():
         return None
-    candidates = [path for path in snapshots.iterdir() if path.is_dir()]
+    candidates = [
+        path
+        for path in snapshots.iterdir()
+        if path.is_dir()
+        and (path / "config.json").is_file()
+        and (path / "model.bin").is_file()
+        and (path / "tokenizer.json").is_file()
+    ]
     return candidates[0] if candidates else None
 
 
-def _download_model(model: str) -> Path:
+def model_size_mb(model: str) -> int:
+    return round(MODEL_SIZE_BYTES.get(model, MODEL_SIZE_BYTES["small"]) / 1_000_000)
+
+
+def model_size_label(model: str) -> str:
+    size = MODEL_SIZE_BYTES.get(model, MODEL_SIZE_BYTES["small"])
+    return f"{size / 1_000_000:.0f} MB / {size / (1024 * 1024):.1f} MiB"
+
+
+def download_model(
+    model: str,
+    progress: Callable[[str], None] = print,
+) -> Path:
+    return _download_model(model, progress)
+
+
+def _download_model(
+    model: str,
+    progress: Callable[[str], None] = print,
+) -> Path:
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise RuntimeError(
             "huggingface-hub is required to download STT models; install `pip install -e .[stt]`"
         ) from exc
+    progress(
+        f"Downloading speech model {model!r} (~{model_size_mb(model)} MB); "
+        "partial files are resumable"
+    )
+
+    from tqdm.auto import tqdm
+
+    class ProgressBar(tqdm):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            kwargs.setdefault("unit", "B")
+            kwargs.setdefault("unit_scale", True)
+            super().__init__(*args, **kwargs)
+
+        def display(self, msg: str | None = None, pos: int | None = None) -> None:
+            progress(
+                f"model download: {self.n}/{self.total or '?'} bytes "
+                f"({self.desc or 'files'})"
+            )
+
     try:
-        return Path(snapshot_download(f"Systran/faster-whisper-{model}"))
+        path = Path(
+            snapshot_download(
+                f"Systran/faster-whisper-{model}",
+                tqdm_class=ProgressBar,
+            )
+        )
+        size = sum(file.stat().st_size for file in path.rglob("*") if file.is_file())
+        progress(f"Downloaded {size / (1024 * 1024):.1f} MB to {path}")
+        return path
     except Exception as exc:
         raise RuntimeError(f"failed to download faster-whisper model: {exc}") from exc

@@ -176,3 +176,55 @@ def test_ptt_real_path_refuses_non_windows(monkeypatch) -> None:
     messages: list[str] = []
     assert run_ptt(Config(), progress=messages.append) == 1
     assert messages == ["[FAIL] PTT is not supported on this platform yet (Windows only)"]
+
+
+@pytest.mark.fake
+def test_ptt_downloads_missing_model_after_confirmation(monkeypatch) -> None:
+    class Device:
+        index = 3
+        name = "fake microphone"
+
+    class FakeHotkey:
+        def events(self, mode):
+            yield "press"
+            yield "release"
+
+    class FakeStt:
+        def preload(self, local_only=False):
+            pass
+
+        def transcribe(self, audio, sample_rate, language):
+            return "downloaded model", 0.01
+
+    downloaded: list[str] = []
+    typed: list[str] = []
+    monkeypatch.setattr(ptt, "select_device", lambda *args: (Device(), "fake"))
+    monkeypatch.setattr(ptt, "_cached_model_path", lambda model: None)
+    monkeypatch.setattr(ptt, "download_model", lambda model, progress: downloaded.append(model))
+    monkeypatch.setattr(ptt, "SttEngine", lambda *args, **kwargs: FakeStt())
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    assert run_ptt(
+        Config(),
+        hotkey=FakeHotkey(),
+        recorder=lambda **kwargs: ("audio", 16000),
+        typer=lambda text, submit: typed.append(text),
+        progress=lambda _: None,
+    ) == 0
+    assert downloaded == ["small"]
+    assert typed == ["downloaded model"]
+
+
+@pytest.mark.fake
+def test_ptt_download_failure_reports_retry_command(monkeypatch) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(ptt, "select_device", lambda *args: (type("D", (), {"index": 3, "name": "fake"})(), "fake"))
+    monkeypatch.setattr(ptt, "_cached_model_path", lambda model: None)
+    monkeypatch.setattr(
+        ptt,
+        "download_model",
+        lambda model, progress: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    assert run_ptt(Config(), progress=messages.append) == 1
+    assert "PTT model download failed: offline" in messages[0]
+    assert "uvx --from" in messages[0]
