@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 import threading
 import ctypes
 from pathlib import Path
@@ -126,16 +127,22 @@ def test_stdio_mcp_hosted_ptt_types_with_one_stt_engine(tmp_path: Path) -> None:
             cwd=str(Path(__file__).parents[1]),
             env=env,
         )
-        async with stdio_client(parameters) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                for _ in range(100):
-                    await asyncio.sleep(0.1)
-                    result = await session.call_tool("voice_status", {})
-                    status = json.loads(result.content[0].text)
-                    if status["ptt_transcript"]:
-                        return status
-                return status
+        with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8") as stderr:
+            async with stdio_client(parameters, errlog=stderr) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    for _ in range(100):
+                        await asyncio.sleep(0.1)
+                        result = await session.call_tool("voice_status", {})
+                        status = json.loads(result.content[0].text)
+                        if status["ptt_transcript"]:
+                            return status
+            stderr.seek(0)
+            raise AssertionError(
+                "hosted PTT did not type within 10s; "
+                f"final voice_status={json.dumps(status, sort_keys=True)}; "
+                f"server stderr={stderr.read()!r}"
+            )
 
     status = asyncio.run(run())
     assert status["ptt_transcript"].startswith("fake transcript")

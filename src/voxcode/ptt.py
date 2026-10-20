@@ -273,6 +273,7 @@ class PttListener:
         model_ready: Callable[[], bool] | None = None,
         hosted: bool = False,
         on_transcript: Callable[[str], None] | None = None,
+        device_selector: Callable[..., tuple[Any, str]] = select_device,
     ) -> None:
         self.config = config
         self.stt = stt
@@ -283,6 +284,7 @@ class PttListener:
         self.model_ready = model_ready or (lambda: True)
         self.hosted = hosted
         self.on_transcript = on_transcript
+        self.device_selector = device_selector
         self.status = "disabled"
         self.error: str | None = None
         self._stop = threading.Event()
@@ -417,7 +419,7 @@ class PttListener:
             print(f"PTT progress reporting failed: {exc}", file=sys.stderr, flush=True)
 
     def _device(self) -> Any:
-        selected, _reason = select_device(
+        selected, _reason = self.device_selector(
             self.config.input_device_name or self.config.input_device,
             "input",
             self.config.input_device_hostapi,

@@ -229,6 +229,7 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
 
             fake_hotkey: Any = FakeHotkey()
             fake_recorder = fake_record
+            fake_device_selector = fake_select
             def fake_typer(text: str, _submit: bool) -> None:
                 nonlocal ptt_last_transcript
                 ptt_last_transcript = text
@@ -236,6 +237,7 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
         else:
             fake_hotkey = None
             fake_recorder = core.record_until_stopped
+            fake_device_selector = core.select_device
             from .ptt import type_text
 
             fake_typer = type_text
@@ -254,6 +256,7 @@ def create_server(fake: bool = False, stt_engine: Any | None = None) -> FastMCP:
             progress=ptt_progress,
             model_ready=ptt_model_ready,
             hosted=True,
+            device_selector=fake_device_selector,
         )
         ptt_listener.start()
         ptt_status = (
