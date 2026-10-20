@@ -217,6 +217,7 @@ def test_ptt_downloads_missing_model_after_confirmation(monkeypatch) -> None:
 @pytest.mark.fake
 def test_ptt_download_failure_reports_retry_command(monkeypatch) -> None:
     messages: list[str] = []
+    monkeypatch.setattr(ptt.sys, "platform", "win32")
     monkeypatch.setattr(ptt, "select_device", lambda *args: (type("D", (), {"index": 3, "name": "fake"})(), "fake"))
     monkeypatch.setattr(ptt, "_cached_model_path", lambda model: None)
     monkeypatch.setattr(
