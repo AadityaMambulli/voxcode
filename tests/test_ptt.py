@@ -1,4 +1,7 @@
 import threading
+import time
+import sys
+import types
 
 import pytest
 
@@ -250,3 +253,79 @@ def test_ptt_standalone_reports_plugin_owned_hotkey(monkeypatch) -> None:
         "plugin listener or another process already owns F9" in message
         for message in messages
     )
+
+
+@pytest.mark.fake
+def test_ptt_failing_beep_does_not_break_typing_or_listener(monkeypatch) -> None:
+    class Device:
+        index = 3
+        name = "fake microphone"
+
+    class FakeHotkey:
+        def events(self, _mode):
+            yield "press"
+            yield "release"
+
+    class FakeStt:
+        def transcribe(self, audio, sample_rate, language):
+            return "cue-safe transcript", 0.01
+
+    typed: list[str] = []
+    monkeypatch.setattr(ptt, "select_device", lambda *args: (Device(), "fake"))
+    monkeypatch.setattr(ptt.sys, "platform", "win32")
+    monkeypatch.setattr(ptt, "_cue_failures", 0)
+    monkeypatch.setattr(ptt, "_cue_disabled", False)
+    monkeypatch.setitem(
+        sys.modules,
+        "winsound",
+        types.SimpleNamespace(
+            Beep=lambda *_args: (_ for _ in ()).throw(RuntimeError("Failed to beep"))
+        ),
+    )
+    listener = ptt.PttListener(
+        Config(ptt_beep=True),
+        FakeStt(),
+        hotkey=FakeHotkey(),
+        recorder=lambda **kwargs: ("audio", 16000),
+        typer=lambda text, submit: typed.append(text),
+        progress=lambda _message: None,
+    )
+    listener.start()
+    assert listener._thread is not None
+    listener._thread.join(1)
+    time.sleep(0.1)
+    assert typed == ["cue-safe transcript"]
+    assert listener.status == "active"
+
+
+@pytest.mark.fake
+def test_ptt_failing_error_cue_keeps_listener_thread_alive(monkeypatch) -> None:
+    class FakeHotkey:
+        def events(self, _mode):
+            yield "press"
+            yield "release"
+
+    monkeypatch.setattr(ptt, "select_device", lambda *args: (type("D", (), {"index": 3, "name": "fake"})(), "fake"))
+    monkeypatch.setattr(ptt.sys, "platform", "win32")
+    monkeypatch.setattr(ptt, "_cue_failures", 0)
+    monkeypatch.setattr(ptt, "_cue_disabled", False)
+    monkeypatch.setitem(
+        sys.modules,
+        "winsound",
+        types.SimpleNamespace(
+            Beep=lambda *_args: (_ for _ in ()).throw(RuntimeError("Failed to beep"))
+        ),
+    )
+    listener = ptt.PttListener(
+        Config(ptt_beep=True),
+        type("Stt", (), {"transcribe": lambda *args: ("unused", 0.01)})(),
+        hotkey=FakeHotkey(),
+        recorder=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("record failed")),
+        progress=lambda _message: None,
+    )
+    listener.start()
+    assert listener._thread is not None
+    listener._thread.join(1)
+    time.sleep(0.1)
+    assert listener.status == "error"
+    assert listener.error == "record failed"

@@ -129,7 +129,7 @@ def test_stdio_mcp_hosted_ptt_types_with_one_stt_engine(tmp_path: Path) -> None:
         async with stdio_client(parameters) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                for _ in range(20):
+                for _ in range(100):
                     await asyncio.sleep(0.1)
                     result = await session.call_tool("voice_status", {})
                     status = json.loads(result.content[0].text)

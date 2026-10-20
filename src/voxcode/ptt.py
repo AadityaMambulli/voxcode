@@ -26,6 +26,10 @@ _VK_RETURN = 0x0D
 _CF_UNICODETEXT = 13
 _GMEM_MOVEABLE = 0x0002
 _GMEM_ZEROINIT = 0x0040
+_cue_lock = threading.Lock()
+_cue_failures = 0
+_cue_disabled = False
+_CUE_FAILURE_LIMIT = 2
 
 
 def key_code(name: str) -> int:
@@ -314,7 +318,7 @@ class PttListener:
                 if event == "press":
                     if not self.model_ready():
                         self.status = "waiting_for_model"
-                        _beep(440)
+                        _cue(440)
                         continue
                     if self.config.ptt_mode == "toggle" and active:
                         self._finish_capture()
@@ -326,8 +330,6 @@ class PttListener:
                 elif event == "release" and active:
                     active = False
                     self._finish_capture()
-            if self.status == "active":
-                self.status = "disabled"
         except RuntimeError as exc:
             self.error = str(exc)
             self.status = (
@@ -335,12 +337,16 @@ class PttListener:
                 if "in use" in str(exc).lower() or "register" in str(exc).lower()
                 else "error"
             )
-            self.progress(
+            self._report(
                 "PTT unavailable: plugin listener or another process already owns "
                 f"{self.config.ptt_key}"
                 if self.status == "owned_by_another_process"
                 else f"PTT error: {exc}"
             )
+        except Exception as exc:
+            self.error = str(exc)
+            self.status = "error"
+            self._report(f"PTT listener error: {exc}")
 
     def _start_capture(self) -> None:
         self._capture_stop = threading.Event()
@@ -360,8 +366,8 @@ class PttListener:
     def _process_capture(self, capture_stop: threading.Event) -> None:
         try:
             if self.config.ptt_beep:
-                _beep(880)
-            self.progress("recording...")
+                _cue(880)
+            self._report("recording...")
             audio, sample_rate = self.recorder(
                 sample_rate=self.config.sample_rate,
                 channels=self.config.channels,
@@ -371,38 +377,44 @@ class PttListener:
                 progress=self.progress,
             )
             if self.config.ptt_beep:
-                _beep(660)
-            self.progress("transcribing...")
+                _cue(660)
+            self._report("transcribing...")
             transcript, _seconds = self.stt.transcribe(
                 audio, sample_rate, self.config.language
             )
             text = sanitize_transcript(transcript, self.config.ptt_max_chars)
             if not text:
-                self.progress("empty transcript; nothing typed")
+                self._report("empty transcript; nothing typed")
                 return
             if self.on_transcript is not None:
                 self.on_transcript(text)
-            self.progress(f"transcript: {text}")
+            self._report(f"transcript: {text}")
             try:
                 self.typer(text, self.config.ptt_auto_submit)
             except Exception as exc:
-                self.progress(f"typing failed: {exc}")
+                self._report(f"typing failed: {exc}")
                 try:
                     copy_to_clipboard(text)
                 except Exception as clipboard_exc:
-                    self.progress(f"clipboard fallback failed: {clipboard_exc}")
+                    self._report(f"clipboard fallback failed: {clipboard_exc}")
                 else:
-                    self.progress(
+                    self._report(
                         "typing failed; text copied to clipboard, press Ctrl+V"
                     )
             else:
-                self.progress(f"typed {len(text)} characters")
+                self._report(f"typed {len(text)} characters")
         except Exception as exc:
             self.error = str(exc)
             self.status = "error"
-            self.progress(f"PTT capture failed: {exc}")
+            self._report(f"PTT capture failed: {exc}")
             if self.config.ptt_beep:
-                _beep(440)
+                _cue(440)
+
+    def _report(self, message: str) -> None:
+        try:
+            self.progress(message)
+        except Exception as exc:
+            print(f"PTT progress reporting failed: {exc}", file=sys.stderr, flush=True)
 
     def _device(self) -> Any:
         selected, _reason = select_device(
@@ -492,7 +504,32 @@ def run_ptt(
 
 
 def _beep(frequency: int) -> None:
-    if sys.platform == "win32":
-        import winsound
+    global _cue_disabled, _cue_failures
+    with _cue_lock:
+        if _cue_disabled:
+            return
+    try:
+        if sys.platform == "win32":
+            import winsound
 
-        winsound.Beep(frequency, 80)
+            winsound.Beep(frequency, 80)
+    except BaseException as exc:
+        with _cue_lock:
+            _cue_failures += 1
+            if _cue_failures >= _CUE_FAILURE_LIMIT:
+                _cue_disabled = True
+            should_log = _cue_failures == 1
+        if should_log:
+            print(
+                f"PTT audio cue disabled after failure: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+
+def _cue(frequency: int) -> None:
+    try:
+        thread = threading.Thread(target=_beep, args=(frequency,), daemon=True)
+        thread.start()
+    except BaseException as exc:
+        print(f"PTT audio cue could not start: {exc}", file=sys.stderr, flush=True)
